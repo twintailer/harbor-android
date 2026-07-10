@@ -1,0 +1,134 @@
+name: ios-build
+
+# Builds an unsigned iOS IPA of Harbor on a macOS runner.
+# Trigger it from the Actions tab or with:
+#   gh workflow run ios-build.yml
+# The resulting artifact (Harbor_<version>_unsigned.ipa) can be installed by
+# re-signing with your own Apple ID via AltStore, Sideloadly or Xcode.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: iOS (aarch64-apple-ios)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            harbor-core
+            src-tauri
+          key: ios
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Initialize iOS project
+        run: pnpm tauri ios init --ci
+
+      - name: Restore app icons
+        run: |
+          ICONSET=$(find src-tauri/gen/apple -type d -name 'AppIcon.appiconset' | head -1)
+          if [ -n "$ICONSET" ] && [ -d src-tauri/icons/ios ]; then
+            cp src-tauri/icons/ios/*.png "$ICONSET"/ || true
+          fi
+
+      - name: Patch Info.plist (URL schemes, ATS, local network, background audio)
+        run: |
+          PLIST=$(find src-tauri/gen/apple -maxdepth 2 -name Info.plist | head -1)
+          echo "Patching $PLIST"
+          python3 - "$PLIST" <<'EOF'
+          import plistlib, sys
+
+          path = sys.argv[1]
+          with open(path, "rb") as f:
+              info = plistlib.load(f)
+
+          # Deep links: harbor:// and stremio:// open the app.
+          info["CFBundleURLTypes"] = [
+              {
+                  "CFBundleURLName": "app.harbor",
+                  "CFBundleURLSchemes": ["harbor", "stremio"],
+              }
+          ]
+
+          # Stremio addons and LAN devices are frequently plain HTTP.
+          info["NSAppTransportSecurity"] = {
+              "NSAllowsArbitraryLoads": True,
+              "NSAllowsLocalNetworking": True,
+          }
+
+          # Cast discovery (Chromecast/AirPlay/DLNA/Roku) on the LAN.
+          info["NSLocalNetworkUsageDescription"] = (
+              "Harbor discovers cast targets like Chromecast, AirPlay, DLNA "
+              "and Roku devices on your local network."
+          )
+          info["NSBonjourServices"] = [
+              "_googlecast._tcp",
+              "_airplay._tcp",
+              "_raop._tcp",
+          ]
+
+          # Keep audio running when the app is backgrounded during playback.
+          modes = set(info.get("UIBackgroundModes", []))
+          modes.add("audio")
+          info["UIBackgroundModes"] = sorted(modes)
+
+          with open(path, "wb") as f:
+              plistlib.dump(info, f)
+          print("Info.plist patched")
+          EOF
+
+      - name: Build unsigned .app (xcodebuild)
+        run: |
+          PROJ=$(ls -d src-tauri/gen/apple/*.xcodeproj | head -1)
+          SCHEME=$(xcodebuild -project "$PROJ" -list -json | \
+            python3 -c "import json,sys; d=json.load(sys.stdin); print(d['project']['schemes'][0])")
+          echo "Project: $PROJ  Scheme: $SCHEME"
+          xcodebuild \
+            -project "$PROJ" \
+            -scheme "$SCHEME" \
+            -configuration release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          APP=$(find build/DerivedData/Build/Products -maxdepth 2 -name '*.app' -type d | head -1)
+          echo "App bundle: $APP"
+          mkdir -p dist-ipa/Payload
+          cp -R "$APP" dist-ipa/Payload/
+          cd dist-ipa
+          zip -qry "Harbor_${VERSION}_unsigned.ipa" Payload
+          ls -la
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbor-ios
+          path: dist-ipa/*.ipa
+          retention-days: 14
+          if-no-files-found: error
