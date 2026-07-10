@@ -4,3 +4,9 @@ allowBuilds:
 # mpegts.js resolves webworkify-webpack from a git repository; pnpm 11 blocks
 # exotic subdependencies by default.
 blockExoticSubdeps: false
+
+# The Xcode "Build Rust Code" phase invokes `pnpm tauri ios xcode-script`
+# in a non-TTY environment; pnpm 11's automatic deps check would try to
+# reinstall node_modules mid-build and abort without a TTY.
+verifyDepsBeforeRun: false
+confirmModulesPurge: false
