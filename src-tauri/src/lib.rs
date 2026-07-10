@@ -85,11 +85,19 @@ fn harbor_flush_done() {
 
 #[tauri::command]
 fn close_aux_windows(app: tauri::AppHandle) {
-    use tauri::Manager;
-    for (label, window) in app.webview_windows() {
-        if label != "main" {
-            let _ = window.close();
+    // WebviewWindow::close does not exist on mobile; there are no aux windows there.
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        for (label, window) in app.webview_windows() {
+            if label != "main" {
+                let _ = window.close();
+            }
         }
+    }
+    #[cfg(mobile)]
+    {
+        let _ = &app;
     }
 }
 
