@@ -28,6 +28,9 @@ function isNoisyError(reason: unknown, message?: string): boolean {
   if (m.includes("script error")) return true;
   if (m.includes("network request failed")) return true;
   if (m.includes("load failed") && m.length < 30) return true;
+  // Tauri window/webview APIs reject on iOS/Android; treat as benign no-ops.
+  if (m.includes("not available on mobile")) return true;
+  if (m.includes("not supported on mobile")) return true;
   if (r?.name === "AbortError") return true;
   if (r?.name === "NetworkError") return true;
   return false;

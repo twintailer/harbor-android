@@ -9,15 +9,21 @@
   --safe-right: env(safe-area-inset-right, 0px);
 }
 
-/* The player stage ([data-harbor-player]) is position:fixed and thus
-   unaffected by this padding — video stays edge to edge. */
-@supports (padding: env(safe-area-inset-top)) {
-  body {
-    padding-top: var(--safe-top);
-    padding-bottom: var(--safe-bottom);
-    padding-left: var(--safe-left);
-    padding-right: var(--safe-right);
-  }
+/* Only the mobile shell gets the offsets (main.tsx stamps data-os). In-flow
+   content moves via body padding; fixed chrome (the topbar header) is shifted
+   by the same amount below. The player stage ([data-harbor-player]) stays
+   edge to edge on purpose. */
+:root[data-os="ios"] body,
+:root[data-os="android"] body {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+:root[data-os="ios"] [data-harbor-topbar],
+:root[data-os="android"] [data-harbor-topbar] {
+  top: var(--safe-top);
 }
 
 @font-face {

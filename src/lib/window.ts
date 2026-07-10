@@ -3,8 +3,10 @@ import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { getWindowFullscreen } from "@/lib/fullscreen-state";
+import { isMobileTauri } from "@/lib/platform";
 
-const win: Window | null = isTauri() ? getCurrentWindow() : null;
+// The Window API is not implemented on iOS/Android; treat mobile like web.
+const win: Window | null = isTauri() && !isMobileTauri() ? getCurrentWindow() : null;
 
 const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent);
@@ -49,9 +51,11 @@ export function useMaximized(): boolean {
     let cancelled = false;
     let timer: number | null = null;
     const check = () => {
-      (IS_MAC ? win.isFullscreen() : win.isMaximized()).then((v) => {
-        if (!cancelled) setMaxed(v);
-      });
+      (IS_MAC ? win.isFullscreen() : win.isMaximized())
+        .then((v) => {
+          if (!cancelled) setMaxed(v);
+        })
+        .catch(() => {});
     };
     check();
     const schedule = () => {

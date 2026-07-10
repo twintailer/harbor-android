@@ -81,6 +81,7 @@ export function TopDock() {
     <>
       <header
         aria-hidden={chromeHidden}
+        data-harbor-topbar
         className={`fixed inset-x-0 top-0 z-[60] flex h-20 items-center px-4 transition-opacity duration-300 ${
           chromeHidden ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
