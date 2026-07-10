@@ -1,2 +1,6 @@
 allowBuilds:
   esbuild: true
+
+# mpegts.js resolves webworkify-webpack from a git repository; pnpm 11 blocks
+# exotic subdependencies by default.
+blockExoticSubdeps: false
