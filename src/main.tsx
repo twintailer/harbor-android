@@ -61,6 +61,38 @@ if (!isPip && !isModal && !isHdrOverlay) {
           ? "windows"
           : "web";
 }
+// Window dragging does not exist on mobile: Tauri's injected handler invokes
+// plugin:window|start_dragging on every pointerdown inside a drag region,
+// which rejects and floods the error surface. Strip the attribute globally.
+if (isMobileTauri()) {
+  const strip = (root: ParentNode) => {
+    if (root instanceof Element && root.hasAttribute("data-tauri-drag-region")) {
+      root.removeAttribute("data-tauri-drag-region");
+    }
+    if (root instanceof Element || root instanceof Document) {
+      root.querySelectorAll("[data-tauri-drag-region]").forEach((el) => {
+        el.removeAttribute("data-tauri-drag-region");
+      });
+    }
+  };
+  strip(document);
+  new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === "attributes" && m.target instanceof Element) {
+        m.target.removeAttribute("data-tauri-drag-region");
+      } else {
+        for (const node of m.addedNodes) {
+          if (node instanceof Element) strip(node);
+        }
+      }
+    }
+  }).observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["data-tauri-drag-region"],
+  });
+}
 if (import.meta.env.DEV) console.log("[harbor] entry: pip =", isPip, "modal =", isModal, "hdr =", isHdrOverlay, "label =", (() => { try { return getCurrentWindow().label; } catch { return "?"; } })());
 if (import.meta.env.DEV && !isPip && !isModal && !isHdrOverlay) {
   void import("./lib/streams/__fixtures__/verify").then((m) => m.logVerificationReport());

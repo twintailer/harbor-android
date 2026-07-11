@@ -45,7 +45,7 @@ export function ChannelGrid({
   }, [visible, epg, tvgIdCounts, nowMinute]);
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3.5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))] sm:gap-3.5">
         {visible.map((ch) => {
           const { current, next } = nowByChannel.get(ch.id) ?? { current: null, next: null };
           const hydrated = hydrations.get(ch.name) ?? null;

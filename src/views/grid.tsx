@@ -60,7 +60,7 @@ export function GridView({ grid }: { grid: GridSpec }) {
 
   const body = (
     <>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-4 gap-y-8">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(105px,1fr))] gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] sm:gap-x-4 sm:gap-y-8">
         {metas.map((m, i) => (
           <PickCard key={`${m.id}-${i}`} meta={m} kids={!!hero} />
         ))}

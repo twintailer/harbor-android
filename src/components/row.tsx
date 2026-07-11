@@ -12,10 +12,13 @@ import {
 } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
 
 const GAP = 20;
+// Phones fit more, smaller cards per row than the desktop min-width yields.
+const MOBILE_CARD_FACTOR = 0.58;
 const EAGER_COUNT = 6;
 const NEAR_MARGIN = "300px";
 
@@ -142,7 +145,8 @@ export function Row({
 }) {
   const { settings } = useSettings();
   const t = useT();
-  const effMin = Math.max(72, Math.round(min * settings.posterScale));
+  const mobileFactor = isMobileTauri() ? MOBILE_CARD_FACTOR : 1;
+  const effMin = Math.max(72, Math.round(min * settings.posterScale * mobileFactor));
   const containerRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const [trackEl, setTrackEl] = useState<HTMLDivElement | null>(null);

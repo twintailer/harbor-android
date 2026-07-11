@@ -15,8 +15,8 @@ export function MobileTopbar() {
   if (chromeHidden) return null;
   return (
     <header
-      data-harbor-topbar
-      className="fixed inset-x-0 top-0 z-[55] flex h-14 items-center gap-2 px-3"
+      className="fixed inset-x-0 top-0 z-[55] flex items-center gap-2 bg-gradient-to-b from-canvas via-canvas/80 to-transparent px-3 pb-3"
+      style={{ paddingTop: "calc(var(--safe-top) + 0.375rem)" }}
     >
       {canGoBack ? (
         <button

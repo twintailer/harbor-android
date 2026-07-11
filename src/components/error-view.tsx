@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import snip404 from "@/assets/snip404.svg";
 import { HarborMark } from "@/components/icons/harbor-mark";
 import { submitErrorReport } from "@/lib/bug-report";
+import { isMobileTauri } from "@/lib/platform";
 
 export type HarborError = {
   code: string;
@@ -31,6 +32,7 @@ function isNoisyError(reason: unknown, message?: string): boolean {
   // Tauri window/webview APIs reject on iOS/Android; treat as benign no-ops.
   if (m.includes("not available on mobile")) return true;
   if (m.includes("not supported on mobile")) return true;
+  if (isMobileTauri() && (m.includes("plugin:window|") || m.includes("plugin:webview|"))) return true;
   if (r?.name === "AbortError") return true;
   if (r?.name === "NetworkError") return true;
   return false;

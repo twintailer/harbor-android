@@ -82,7 +82,7 @@ export default function ListsView({ active }: { active: boolean }) {
                   {t("Showing {shown} of {total}.", { shown: RENDER_CAP.toLocaleString(), total: items.length.toLocaleString() })}
                 </p>
               )}
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-4 gap-y-8">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(105px,1fr))] gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] sm:gap-x-4 sm:gap-y-8">
                 {items.slice(0, RENDER_CAP).map((m, i) => (
                   <PickCard key={`${m.id}-${i}`} meta={m} />
                 ))}

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
+﻿import { ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BackToTop } from "@/components/back-to-top";
 import { PickCard } from "@/components/pick-card";
@@ -143,7 +143,7 @@ export function ServiceView({ service }: { service: StreamingService }) {
 
       <div className="px-12 pt-10">
         {loading && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-5 gap-y-9">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(105px,1fr))] gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] sm:gap-x-5 sm:gap-y-9">
             {Array.from({ length: 18 }).map((_, i) => (
               <div key={i} className="aspect-[2/3] animate-pulse rounded-xl border border-edge-soft bg-elevated/30" />
             ))}
@@ -208,7 +208,7 @@ export function ServiceView({ service }: { service: StreamingService }) {
         {!loading && category.id !== "all" && (
           <>
             {merged.length > 0 ? (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-5 gap-y-9">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(105px,1fr))] gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] sm:gap-x-5 sm:gap-y-9">
                 {merged.map((m) => (
                   <PickCard key={m.id} meta={m} />
                 ))}
@@ -418,7 +418,7 @@ function EmptyState({ hasKey }: { hasKey: boolean }) {
     <div className="rounded-2xl border border-dashed border-edge px-6 py-16 text-center text-[14px] text-ink-muted">
       {hasKey
         ? t("Nothing matched this filter. Try another category or change your region in Settings.")
-        : t("Add a TMDB key in Settings → Library to power this view.")}
+        : t("Add a TMDB key in Settings â†’ Library to power this view.")}
     </div>
   );
 }
