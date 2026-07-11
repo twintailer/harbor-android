@@ -42,23 +42,28 @@ jobs:
 
       # MobileVLCKit powers the native-player plugin. SwiftPM's CLI build
       # (used by swift-rs during cargo build) cannot consume binary
-      # xcframework targets, so the framework is linked at the app level:
-      # download it, add it to the generated Xcode project spec, regenerate.
+      # xcframework targets, so the plugin only compiles against interop
+      # declarations. Extract the device slice to a fixed path: the plugin's
+      # build.rs links it during cargo build, and the Xcode project links it
+      # for the final app (project.yml patch + regenerate).
       - name: Add MobileVLCKit framework
         run: |
           curl -L -o vlckit.zip "https://github.com/tylerjonesio/vlckit-spm/releases/download/3.6.0/VLCKit-all.xcframework.zip"
           echo "5da4747e001900bbb4153f58db2be4695096c9c2350aea00376ad67b39c053f6  vlckit.zip" | shasum -a 256 -c -
-          mkdir -p src-tauri/gen/apple/Frameworks
-          unzip -q vlckit.zip -d src-tauri/gen/apple/Frameworks
-          FW=$(basename "$(find src-tauri/gen/apple/Frameworks -maxdepth 1 -name '*.xcframework' | head -1)")
-          echo "Framework: $FW"
-          FW="$FW" ruby -ryaml -e '
+          unzip -q vlckit.zip -d vlckit-tmp
+          SLICE=$(find vlckit-tmp -type d -name 'MobileVLCKit.framework' -path '*ios-arm64*' ! -path '*simulator*' | head -1)
+          echo "Device slice: $SLICE"
+          test -n "$SLICE"
+          mkdir -p src-tauri/frameworks-ios
+          cp -R "$SLICE" src-tauri/frameworks-ios/
+          rm -rf vlckit-tmp vlckit.zip
+          ruby -ryaml -e '
             path = "src-tauri/gen/apple/project.yml"
             y = YAML.load_file(path)
             name, target = y["targets"].find { |k, _| k.end_with?("_iOS") }
             raise "no iOS target found" unless target
             target["dependencies"] ||= []
-            target["dependencies"] << { "framework" => "Frameworks/#{ENV["FW"]}", "embed" => false }
+            target["dependencies"] << { "framework" => "../../frameworks-ios/MobileVLCKit.framework", "embed" => false }
             settings = (target["settings"] ||= {})
             base = (settings["base"] ||= {})
             flags = base["OTHER_LDFLAGS"] || "$(inherited)"
