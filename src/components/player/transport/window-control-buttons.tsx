@@ -1,11 +1,12 @@
 import { Copy, Minus, Square, X } from "lucide-react";
+import { isMobileTauri } from "@/lib/platform";
 import { close, minimize, toggleMaximize, useMaximized } from "@/lib/window";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export function WindowControlButtons({ t }: { t: (key: string) => string }) {
   const maxed = useMaximized();
-  if (!IS_TAURI) return null;
+  if (!IS_TAURI || isMobileTauri()) return null;
   return (
     <div className="pointer-events-auto flex items-center gap-1">
       <button

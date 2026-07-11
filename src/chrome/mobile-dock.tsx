@@ -59,7 +59,7 @@ export function MobileDock() {
     <>
       <nav
         data-harbor-mobile-dock
-        className="fixed inset-x-0 bottom-0 z-[70] border-t border-edge-soft bg-canvas/95 backdrop-blur-xl"
+        className="fixed inset-x-0 bottom-0 z-[70] border-t border-edge-soft bg-canvas"
         style={{ paddingBottom: "var(--safe-bottom)" }}
       >
         <div className="flex h-16 items-stretch px-1">
@@ -105,9 +105,9 @@ export function MobileDock() {
 
       {moreOpen && (
         <div className="fixed inset-0 z-[69]" onClick={() => setMoreOpen(false)}>
-          <div className="absolute inset-0 bg-canvas/60 backdrop-blur-[2px]" />
+          <div className="harbor-backdrop-in absolute inset-0 bg-canvas/60 backdrop-blur-[2px]" />
           <div
-            className="absolute inset-x-0 rounded-t-3xl border-t border-edge-soft bg-surface shadow-2xl"
+            className="harbor-sheet-in absolute inset-x-0 rounded-t-3xl border-t border-edge-soft bg-surface shadow-2xl"
             style={{ bottom: "calc(var(--safe-bottom) + 4rem)" }}
             onClick={(e) => e.stopPropagation()}
           >

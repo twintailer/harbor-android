@@ -26,7 +26,7 @@ function LogoLayer({
       }}
       onLoad={done}
       onError={onFailed}
-      className={`absolute bottom-0 start-0 max-h-[124px] w-auto max-w-[440px] object-contain object-left rtl:object-right drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)] transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
+      className={`absolute bottom-0 start-0 max-h-[124px] w-auto max-w-[440px] max-sm:max-h-[88px] max-sm:max-w-[76vw] object-contain object-left rtl:object-right drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)] transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
     />
   );
 }

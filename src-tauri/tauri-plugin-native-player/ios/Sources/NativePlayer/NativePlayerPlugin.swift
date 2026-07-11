@@ -67,6 +67,7 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   }
 
   private func teardown() {
+    UIApplication.shared.isIdleTimerDisabled = false
     player?.delegate = nil
     player?.stop()
     player = nil
@@ -186,6 +187,7 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       self.appliedStartAt = self.pendingStartAt <= 0
       self.lastTracksSignature = ""
       self.player = player
+      UIApplication.shared.isIdleTimerDisabled = true
       player.play()
       invoke.resolve()
     }

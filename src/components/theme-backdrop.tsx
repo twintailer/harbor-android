@@ -1,4 +1,5 @@
 import { AuroraBokeh } from "@/components/aurora-bokeh";
+import { isMobileTauri } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 import { getThemeById } from "@/lib/theme";
 import { useThemePreview } from "@/lib/theme-preview";
@@ -13,7 +14,9 @@ export function ThemeBackdrop() {
 
   const preset =
     settings.theme.preset !== "custom" ? getThemeById(settings.theme.preset) : null;
-  const wantsBokeh = (preview ? preview.bokeh : !!preset?.bokeh) && view !== "addons";
+  // The animated bokeh layer keeps the GPU busy; skip it on phones (battery/heat).
+  const wantsBokeh =
+    (preview ? preview.bokeh : !!preset?.bokeh) && view !== "addons" && !isMobileTauri();
   const img = settings.theme.backgroundImage ?? preset?.background?.image ?? null;
   const dim = Math.max(
     0,

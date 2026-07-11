@@ -1,4 +1,5 @@
 import { t as translate } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 import { Camera, ChevronLeft, Info, Maximize, Minimize, PauseCircle, PictureInPicture2, PlayCircle, Replace, Tv } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PlayerCapabilities, PlayerSnapshot } from "@/lib/player/bridge";
@@ -333,7 +334,8 @@ export function renderControl(id: PlayerControlId, ctx: ControlContext): ReactNo
       );
     }
     case "audio-menu": {
-      if (ctx.tight || ctx.engine === "html5") return null;
+      // The mobile native (VLCKit) bridge reports as html5 but supports track switching.
+      if (ctx.tight || (ctx.engine === "html5" && !isMobileTauri())) return null;
       return (
         <AudioMenu
           tracks={ctx.snap.audioTracks}
@@ -369,7 +371,8 @@ export function renderControl(id: PlayerControlId, ctx: ControlContext): ReactNo
       );
     }
     case "speed-menu": {
-      if (ctx.compact || ctx.isLiveChannel) return null;
+      // Phones are always below the compact breakpoint; keep speed reachable there.
+      if ((ctx.compact && !isMobileTauri()) || ctx.isLiveChannel) return null;
       return (
         <SpeedMenu
           rate={ctx.snap.rate}

@@ -308,7 +308,7 @@ function HeroTitlePlate({
           decoding="async"
           onLoad={onLoad}
           onError={onError}
-          className="max-h-[120px] w-auto max-w-[460px] object-contain object-left rtl:object-right drop-shadow-[0_6px_22px_rgba(0,0,0,0.45)]"
+          className="max-h-[120px] w-auto max-w-[460px] max-sm:max-h-[84px] max-sm:max-w-[74vw] object-contain object-left rtl:object-right drop-shadow-[0_6px_22px_rgba(0,0,0,0.45)]"
           style={{
             opacity: loaded ? 1 : 0,
             transition: "opacity 360ms cubic-bezier(0.32, 0.72, 0.24, 1)",

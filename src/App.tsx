@@ -761,7 +761,8 @@ function Shell() {
     });
   }, [topKind]);
 
-  const layer = (top: boolean) => (top ? "contents" : "hidden");
+  // harbor-view-layer drives the mobile view-transition animation (index.css).
+  const layer = (top: boolean) => (top ? "contents harbor-view-layer" : "hidden harbor-view-layer");
 
   const overlayPinned = useOverlayPinned();
   const settingsAlive = useIdleEvict(settingsTop, overlayPinned);
