@@ -13,6 +13,9 @@ const COMMANDS: &[&str] = &[
     "add_subtitle",
     "lock_landscape",
     "unlock_orientation",
+    // addPluginListener on the JS side goes through these built-ins.
+    "registerListener",
+    "remove_listener",
 ];
 
 fn main() {

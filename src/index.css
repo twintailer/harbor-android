@@ -43,6 +43,46 @@
   user-select: none;
 }
 
+/* Display headings across the app use fixed desktop pixel sizes (36-80px).
+   On the phone shell, cap them wholesale via literal class matching instead
+   of touching every view. */
+:root[data-os="ios"] [class*="text-[80px]"],
+:root[data-os="android"] [class*="text-[80px]"],
+:root[data-os="ios"] [class*="text-[76px]"],
+:root[data-os="android"] [class*="text-[76px]"],
+:root[data-os="ios"] [class*="text-[72px]"],
+:root[data-os="android"] [class*="text-[72px]"] {
+  font-size: 34px !important;
+}
+:root[data-os="ios"] [class*="text-[64px]"],
+:root[data-os="android"] [class*="text-[64px]"],
+:root[data-os="ios"] [class*="text-[60px]"],
+:root[data-os="android"] [class*="text-[60px]"],
+:root[data-os="ios"] [class*="text-[56px]"],
+:root[data-os="android"] [class*="text-[56px]"] {
+  font-size: 30px !important;
+}
+:root[data-os="ios"] [class*="text-[52px]"],
+:root[data-os="android"] [class*="text-[52px]"],
+:root[data-os="ios"] [class*="text-[48px]"],
+:root[data-os="android"] [class*="text-[48px]"],
+:root[data-os="ios"] [class*="text-[44px]"],
+:root[data-os="android"] [class*="text-[44px]"] {
+  font-size: 26px !important;
+}
+:root[data-os="ios"] [class*="text-[42px]"],
+:root[data-os="android"] [class*="text-[42px]"],
+:root[data-os="ios"] [class*="text-[40px]"],
+:root[data-os="android"] [class*="text-[40px]"],
+:root[data-os="ios"] [class*="text-[38px]"],
+:root[data-os="android"] [class*="text-[38px]"] {
+  font-size: 24px !important;
+}
+:root[data-os="ios"] [class*="text-[36px]"],
+:root[data-os="android"] [class*="text-[36px]"] {
+  font-size: 22px !important;
+}
+
 /* While the native (VLCKit) player renders behind the webview, everything
    between the HTML chrome and the video must be see-through. */
 :root[data-native-video="1"],
