@@ -13,6 +13,8 @@ const en: Record<string, string> = {
   "nav.downloads": "Downloads",
   "nav.addons": "Addons",
   "nav.settings": "Settings",
+  "nav.search": "Search",
+  "nav.more": "More",
   "nav.collections": "Collections",
   "nav.arabic": "العربية",
 

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 import { activeLayout } from "@/lib/theme";
 import { useView } from "@/lib/view";
 import { settingsAnchor, type SectionId } from "./shared";
@@ -1078,7 +1079,8 @@ export function SettingsNav({
   const t = useT();
   const isNew = useSettingsNew();
   const navLayout = activeLayout(settings.theme);
-  const showBack = navLayout === "custom" || navLayout === "minui";
+  const mobile = isMobileTauri();
+  const showBack = navLayout === "custom" || navLayout === "minui" || mobile;
   const [query, setQuery] = useState("");
   const trimmed = query.trim().toLowerCase();
   const sectionLabel = useMemo(() => {
@@ -1218,7 +1220,11 @@ export function SettingsNav({
   };
 
   return (
-    <nav className="relative flex w-72 shrink-0 flex-col bg-surface pt-24 shadow-[1px_0_0_var(--color-edge)]">
+    <nav
+      className={`relative flex shrink-0 flex-col bg-surface shadow-[1px_0_0_var(--color-edge)] ${
+        mobile ? "w-full pt-[calc(var(--safe-top)+1rem)]" : "w-72 pt-24"
+      }`}
+    >
       <div data-tauri-drag-region className="h-3 shrink-0" />
       {showBack && (
         <div className="px-3 pb-1.5">

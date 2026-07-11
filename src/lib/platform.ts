@@ -16,6 +16,14 @@ export function isIOS(): boolean {
 
 /** Running inside the Tauri shell on a mobile OS (iOS/Android). */
 export function isMobileTauri(): boolean {
+  try {
+    // Debug escape hatch: preview the mobile shell in a desktop browser.
+    if (typeof localStorage !== "undefined" && localStorage.getItem("harbor.forceMobileShell") === "1") {
+      return true;
+    }
+  } catch {
+    /* storage unavailable */
+  }
   if (!isTauri()) return false;
   const ua = (navigator.userAgent || "").toLowerCase();
   return isIOS() || ua.includes("android");

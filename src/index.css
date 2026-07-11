@@ -11,12 +11,13 @@
 
 /* Only the mobile shell gets the offsets (main.tsx stamps data-os). In-flow
    content moves via body padding; fixed chrome (the topbar header) is shifted
-   by the same amount below. The player stage ([data-harbor-player]) stays
-   edge to edge on purpose. */
+   by the same amount below. The bottom padding clears the mobile dock plus
+   the home indicator. The player stage ([data-harbor-player]) stays edge to
+   edge on purpose. */
 :root[data-os="ios"] body,
 :root[data-os="android"] body {
   padding-top: var(--safe-top);
-  padding-bottom: var(--safe-bottom);
+  padding-bottom: calc(var(--safe-bottom) + 4.5rem);
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);
 }
@@ -24,6 +25,19 @@
 :root[data-os="ios"] [data-harbor-topbar],
 :root[data-os="android"] [data-harbor-topbar] {
   top: var(--safe-top);
+}
+
+/* Touch polish for the mobile shell: no tap flash, no long-press callouts on
+   chrome, no rubber-band overscroll behind the app. */
+:root[data-os="ios"],
+:root[data-os="android"] {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+:root[data-os="ios"] button,
+:root[data-os="android"] button {
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 @font-face {

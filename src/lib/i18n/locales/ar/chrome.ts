@@ -11,6 +11,8 @@ const chrome: Record<string, string> = {
   "nav.downloads": "التنزيلات",
   "nav.addons": "الإضافات",
   "nav.settings": "الإعدادات",
+  "nav.search": "بحث",
+  "nav.more": "المزيد",
   "nav.collections": "المجموعات",
   "nav.arabic": "العربية",
 

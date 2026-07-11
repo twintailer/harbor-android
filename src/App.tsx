@@ -3,6 +3,8 @@ import { FloatingBack } from "@/chrome/floating-back";
 import { WindowControls } from "@/chrome/window-controls";
 import { WindowResizeEdges } from "@/chrome/window-resize-edges";
 import { MinUIDock } from "@/chrome/minui-dock";
+import { MobileDock } from "@/chrome/mobile-dock";
+import { MobileTopbar } from "@/chrome/mobile-topbar";
 import { Sidebar } from "@/chrome/sidebar";
 import { DraculaSidebar } from "@/chrome/dracula-sidebar";
 import { NordSidebar } from "@/chrome/nord-sidebar";
@@ -19,7 +21,7 @@ import { exitWindowFullscreenOnPlayerClose, toggleWindowFullscreen } from "@/lib
 import { flushCloudSync } from "@/views/player/hooks/use-stremio-sync";
 import { setNativeMemoryActive } from "@/lib/native-memory";
 import { useOverlayPinned } from "@/lib/overlay-pin";
-import { isMobileDevice, isWeb } from "@/lib/platform";
+import { isMobileDevice, isMobileTauri, isWeb } from "@/lib/platform";
 import { activeLayout } from "@/lib/theme";
 import { useThemePreview } from "@/lib/theme-preview";
 import { DevErrorTrigger } from "@/components/dev-error-trigger";
@@ -283,7 +285,7 @@ export function App() {
                       <ContextMenu />
                       <WatchLocalModal />
                       <LocalEpisodesModal />
-                      <HoverPreview />
+                      {!isMobileTauri() && <HoverPreview />}
                       <CustomHoverCssMount />
                       <TopRankModal />
                       <ProfilePickerModal />
@@ -750,24 +752,27 @@ function Shell() {
   const vodAlive = useIdleEvict(vodTop);
   const downloadsAlive = useIdleEvict(downloadsTop);
 
+  const mobileShell = isMobileTauri();
   return (
     <div data-kids={kidsTop || kid ? "on" : undefined} className="relative flex h-full">
-      {!settingsTop && !playerActive && !liveTop && !pickerTop && layout === "sidebar" && <Sidebar />}
-      {!settingsTop && !playerActive && !liveTop && !pickerTop && layout === "dracula" && <DraculaSidebar />}
-      {!settingsTop && !playerActive && !liveTop && !pickerTop && layout === "nord" && <NordSidebar />}
-      {!settingsTop && !playerActive && !liveTop && !pickerTop && layout === "forest" && <ForestSidebar />}
-      {!settingsTop && !playerActive && !liveTop && !pickerTop && layout === "stremio" && <StremioRail />}
-      {!settingsTop && !playerActive && !pickerTop && layout === "topdock" && <TopDock />}
-      {!settingsTop && !playerActive && !pickerTop && layout === "cinematic" && <CinematicOverlay />}
-      {!settingsTop && !playerActive && !pickerTop && layout === "royal" && <RoyalTopbar />}
-      {!settingsTop && !playerActive && !pickerTop && layout === "rail" && <SideRail />}
-      {!playerActive && !pickerTop && layout === "minui" && <MinUIDock />}
-      {!playerActive && !pickerTop && layout === "topdock" && <FloatingBack offsetTop={92} />}
-      {!playerActive && !pickerTop && layout === "cinematic" && <FloatingBack offsetTop={92} />}
-      {!playerActive && !pickerTop && layout === "royal" && <FloatingBack offsetTop={92} />}
-      {!playerActive && !pickerTop && layout === "rail" && <FloatingBack offsetLeft={settings.sidebarCollapsed ? 88 : 220} offsetTop={28} />}
-      {!playerActive && !pickerTop && layout === "custom" && <FloatingBack offsetLeft={20} offsetTop={20} />}
-      {!playerActive && !pickerTop && layout === "custom" && (
+      {mobileShell && !playerActive && !pickerTop && <MobileDock />}
+      {mobileShell && !playerActive && !pickerTop && !settingsTop && !immersive && <MobileTopbar />}
+      {!mobileShell && !settingsTop && !playerActive && !liveTop && !pickerTop && layout === "sidebar" && <Sidebar />}
+      {!mobileShell && !settingsTop && !playerActive && !liveTop && !pickerTop && layout === "dracula" && <DraculaSidebar />}
+      {!mobileShell && !settingsTop && !playerActive && !liveTop && !pickerTop && layout === "nord" && <NordSidebar />}
+      {!mobileShell && !settingsTop && !playerActive && !liveTop && !pickerTop && layout === "forest" && <ForestSidebar />}
+      {!mobileShell && !settingsTop && !playerActive && !liveTop && !pickerTop && layout === "stremio" && <StremioRail />}
+      {!mobileShell && !settingsTop && !playerActive && !pickerTop && layout === "topdock" && <TopDock />}
+      {!mobileShell && !settingsTop && !playerActive && !pickerTop && layout === "cinematic" && <CinematicOverlay />}
+      {!mobileShell && !settingsTop && !playerActive && !pickerTop && layout === "royal" && <RoyalTopbar />}
+      {!mobileShell && !settingsTop && !playerActive && !pickerTop && layout === "rail" && <SideRail />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "minui" && <MinUIDock />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "topdock" && <FloatingBack offsetTop={92} />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "cinematic" && <FloatingBack offsetTop={92} />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "royal" && <FloatingBack offsetTop={92} />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "rail" && <FloatingBack offsetLeft={settings.sidebarCollapsed ? 88 : 220} offsetTop={28} />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "custom" && <FloatingBack offsetLeft={20} offsetTop={20} />}
+      {!mobileShell && !playerActive && !pickerTop && layout === "custom" && (
         <div className="fixed end-3 top-3 z-[120]">
           <WindowControls />
         </div>
@@ -986,7 +991,7 @@ function Shell() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 z-30 h-24 bg-gradient-to-b from-canvas/85 via-canvas/40 to-transparent"
         />
-        {!immersive && (themeHasTopbar || (settingsTop && layout !== "minui" && layout !== "custom")) && <Topbar />}
+        {!mobileShell && !immersive && (themeHasTopbar || (settingsTop && layout !== "minui" && layout !== "custom")) && <Topbar />}
         {!immersive && layout === "rail" && !settingsTop && (
           <div
             aria-hidden

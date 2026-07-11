@@ -12,6 +12,8 @@ const pt: Record<string, string> = {
   "nav.downloads": "Downloads",
   "nav.addons": "Extensões",
   "nav.settings": "Configurações",
+  "nav.search": "Buscar",
+  "nav.more": "Mais",
   "nav.collections": "Coleções",
   "nav.arabic": "العربية",
 

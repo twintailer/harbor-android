@@ -29,6 +29,7 @@ import { resetOmdbBudget } from "@/lib/providers/omdb";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 
 const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
@@ -149,9 +150,14 @@ export function Settings() {
   const [pendingAnchor, setPendingAnchor] = useState<string | null>(null);
   const scrollRef = useRef<HTMLElement>(null);
 
+  // Phone shell: nav list and section content are one pane at a time.
+  const mobile = isMobileTauri();
+  const [mobilePane, setMobilePane] = useState<"nav" | "content">("nav");
+
   const handleNav = (id: SectionId, anchor?: string) => {
     setActive(id);
     setPendingAnchor(anchor ?? null);
+    setMobilePane("content");
   };
 
   useEffect(() => {
@@ -237,12 +243,26 @@ export function Settings() {
   return (
     <SettingsActiveContext.Provider value={{ setActive }}>
     <div className="flex h-full bg-canvas">
-      <SettingsNav active={active} onChange={handleNav} />
+      <div className={mobile ? (mobilePane === "nav" ? "flex w-full" : "hidden") : "contents"}>
+        <SettingsNav active={active} onChange={handleNav} />
+      </div>
       <main
         ref={scrollRef}
-        className="flex-1 overflow-y-auto pt-28 pb-16"
+        className={`flex-1 overflow-y-auto pb-16 ${mobile ? "pt-[calc(var(--safe-top)+3.5rem)]" : "pt-28"} ${
+          mobile && mobilePane === "nav" ? "hidden" : ""
+        }`}
       >
-        <div data-tauri-drag-region className="mx-auto flex max-w-3xl flex-col gap-10 px-12">
+        <div data-tauri-drag-region className={`mx-auto flex max-w-3xl flex-col gap-10 ${mobile ? "px-5" : "px-12"}`}>
+          {mobile && (
+            <button
+              type="button"
+              onClick={() => setMobilePane("nav")}
+              className="-mb-4 flex h-10 w-fit items-center gap-1.5 rounded-full border border-edge-soft bg-elevated/60 px-3.5 text-[14px] font-medium text-ink-muted active:bg-elevated"
+            >
+              <span aria-hidden>‹</span>
+              {t("nav.settings")}
+            </button>
+          )}
           {!(active === "relay" && relayMode !== "panel") && (
             <header className="flex flex-col gap-2">
               <h1 className="font-display text-[44px] font-medium leading-[1.05] tracking-tight text-ink">
