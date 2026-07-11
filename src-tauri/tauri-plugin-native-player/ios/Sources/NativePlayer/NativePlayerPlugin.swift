@@ -1,7 +1,7 @@
 import AVFoundation
+import CVLC
 import Tauri
 import UIKit
-import VLCKitSPM
 import WebKit
 
 struct LoadArgs: Decodable {

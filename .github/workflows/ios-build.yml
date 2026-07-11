@@ -40,6 +40,39 @@ jobs:
       - name: Initialize iOS project
         run: pnpm tauri ios init --ci
 
+      # MobileVLCKit powers the native-player plugin. SwiftPM's CLI build
+      # (used by swift-rs during cargo build) cannot consume binary
+      # xcframework targets, so the framework is linked at the app level:
+      # download it, add it to the generated Xcode project spec, regenerate.
+      - name: Add MobileVLCKit framework
+        run: |
+          curl -L -o vlckit.zip "https://github.com/tylerjonesio/vlckit-spm/releases/download/3.6.0/VLCKit-all.xcframework.zip"
+          echo "5da4747e001900bbb4153f58db2be4695096c9c2350aea00376ad67b39c053f6  vlckit.zip" | shasum -a 256 -c -
+          mkdir -p src-tauri/gen/apple/Frameworks
+          unzip -q vlckit.zip -d src-tauri/gen/apple/Frameworks
+          FW=$(basename "$(find src-tauri/gen/apple/Frameworks -maxdepth 1 -name '*.xcframework' | head -1)")
+          echo "Framework: $FW"
+          FW="$FW" ruby -ryaml -e '
+            path = "src-tauri/gen/apple/project.yml"
+            y = YAML.load_file(path)
+            name, target = y["targets"].find { |k, _| k.end_with?("_iOS") }
+            raise "no iOS target found" unless target
+            target["dependencies"] ||= []
+            target["dependencies"] << { "framework" => "Frameworks/#{ENV["FW"]}", "embed" => false }
+            settings = (target["settings"] ||= {})
+            base = (settings["base"] ||= {})
+            flags = base["OTHER_LDFLAGS"] || "$(inherited)"
+            base["OTHER_LDFLAGS"] = flags + " -lc++ -lxml2 -lz -lbz2 -liconv" \
+              " -framework QuartzCore -framework CoreText -framework AVFoundation" \
+              " -framework Security -framework CFNetwork -framework AudioToolbox" \
+              " -framework OpenGLES -framework CoreGraphics -framework VideoToolbox" \
+              " -framework CoreMedia"
+            File.write(path, y.to_yaml)
+            puts "patched target #{name}"
+          '
+          brew install xcodegen
+          (cd src-tauri/gen/apple && xcodegen generate)
+
       - name: Restore app icons
         run: |
           ICONSET=$(find src-tauri/gen/apple -type d -name 'AppIcon.appiconset' | head -1)
