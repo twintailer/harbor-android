@@ -63,9 +63,12 @@ jobs:
             name, target = y["targets"].find { |k, _| k.end_with?("_iOS") }
             raise "no iOS target found" unless target
             target["dependencies"] ||= []
-            target["dependencies"] << { "framework" => "../../frameworks-ios/MobileVLCKit.framework", "embed" => false }
+            # MobileVLCKit is a dynamic framework: link AND embed it, or the
+            # app aborts at launch with dyld "Library not loaded".
+            target["dependencies"] << { "framework" => "../../frameworks-ios/MobileVLCKit.framework", "embed" => true, "codeSign" => false }
             settings = (target["settings"] ||= {})
             base = (settings["base"] ||= {})
+            base["LD_RUNPATH_SEARCH_PATHS"] = "$(inherited) @executable_path/Frameworks"
             flags = base["OTHER_LDFLAGS"] || "$(inherited)"
             base["OTHER_LDFLAGS"] = flags + " -lc++ -lxml2 -lz -lbz2 -liconv" \
               " -framework QuartzCore -framework CoreText -framework AVFoundation" \
