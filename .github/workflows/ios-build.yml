@@ -88,6 +88,15 @@ jobs:
           modes.add("audio")
           info["UIBackgroundModes"] = sorted(modes)
 
+          # Allow rotating into landscape (the player locks itself there).
+          orientations = [
+              "UIInterfaceOrientationPortrait",
+              "UIInterfaceOrientationLandscapeLeft",
+              "UIInterfaceOrientationLandscapeRight",
+          ]
+          info["UISupportedInterfaceOrientations"] = orientations
+          info["UISupportedInterfaceOrientations~ipad"] = orientations
+
           with open(path, "wb") as f:
               plistlib.dump(info, f)
           print("Info.plist patched")

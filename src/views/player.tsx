@@ -42,6 +42,7 @@ import { useMpvEmbed } from "./player/hooks/use-mpv-embed";
 import { usePlayerBridge } from "./player/hooks/use-player-bridge";
 import { useTextSync } from "./player/hooks/use-text-sync";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 import { useEpisodeNavigation } from "./player/hooks/use-episode-navigation";
 import { useAbLoop } from "./player/hooks/use-ab-loop";
 import { useAutoNextEpisode } from "./player/hooks/use-auto-next-episode";
@@ -82,6 +83,18 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
   const isKid = useActiveKid() != null;
   const t = useT();
   const chromeTheme = resolveChromeTheme(settings.theme, settings.playerChromeTheme);
+  // Phone shell: rotate into landscape while a video is open, back on close.
+  useEffect(() => {
+    if (!isMobileTauri()) return;
+    void import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke("plugin:native-player|lock_landscape").catch(() => {});
+    });
+    return () => {
+      void import("@tauri-apps/api/core").then(({ invoke }) => {
+        invoke("plugin:native-player|unlock_orientation").catch(() => {});
+      });
+    };
+  }, []);
   useEffect(() => {
     const root = document.documentElement;
     if (!settings.playerMenuBlack) {

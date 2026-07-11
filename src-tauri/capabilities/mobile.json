@@ -35,6 +35,7 @@
     "fs:default",
     "deep-link:default",
     "process:default",
+    "native-player:default",
     {
       "identifier": "fs:allow-write-file",
       "allow": [{ "path": "**" }]

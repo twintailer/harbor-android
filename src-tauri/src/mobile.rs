@@ -22,7 +22,10 @@ pub fn run() {
             eprintln!("[stream-proxy] failed to start: {}", e);
             stream_proxy::ProxyState::placeholder()
         });
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_native_player::init());
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())

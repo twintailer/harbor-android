@@ -265,7 +265,7 @@ export function Settings() {
           )}
           {!(active === "relay" && relayMode !== "panel") && (
             <header className="flex flex-col gap-2">
-              <h1 className="font-display text-[44px] font-medium leading-[1.05] tracking-tight text-ink">
+              <h1 className="font-display text-[30px] font-medium leading-[1.05] tracking-tight text-ink sm:text-[44px]">
                 {t(SECTION_META[active].label)}
               </h1>
               <p className="text-[15px] text-ink-muted">{t(SECTION_META[active].sub)}</p>

@@ -1,4 +1,4 @@
-import { Check, Download, FlaskConical, Github, Link2, Loader2, Lock, RotateCw, Wrench } from "lucide-react";
+﻿import { Check, Download, FlaskConical, Github, Link2, Loader2, Lock, RotateCw, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import cornerSvg from "@/assets/corner.svg";
 import harborDiscord from "@/assets/harbor-discord.svg";
@@ -36,8 +36,11 @@ import { Signature } from "./signature";
 import { CustomCodeCard, DownloadsSection } from "./player-panel";
 import { DesktopOnlyBlock } from "./player-panel/internals";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// Updater, tray and Discord IPC are desktop machinery; hide them on phones.
+const isDesktopShell = isTauri && !isMobileTauri();
 const DOWNLOAD_URL = "https://harbor.site/download";
 const SOURCE_URL = "https://github.com/harborstremio/harbor";
 
@@ -47,7 +50,7 @@ export function AdvancedPanel() {
     <>
       {!isTauri && <WebBuildBanner />}
 
-      {isTauri && (
+      {isDesktopShell && (
         <Section
           title={t("Updates")}
           subtitle={t("Harbor checks harbor.site for new versions and installs them in place. Nothing installs until you choose to, and a dismissed update never nags you again.")}
@@ -83,7 +86,7 @@ export function AdvancedPanel() {
         <PrivacyRow />
       </Section>
 
-      {isTauri && (
+      {isDesktopShell && (
         <Section
           title={t("System tray")}
           subtitle={t("Keep Harbor a click away. Close it to the system tray instead of quitting, and control it from the tray menu. These also mirror into the tray menu live.")}
@@ -92,7 +95,7 @@ export function AdvancedPanel() {
         </Section>
       )}
 
-      {isTauri && (
+      {isDesktopShell && (
         <Section
           title={t("Stremio install links")}
           subtitle={t("Harbor catches stremio:// install links so the configure-and-install flow stays inside the app. Every install also syncs to your Stremio account, so the official app remains the canonical home for your library.")}
@@ -101,7 +104,7 @@ export function AdvancedPanel() {
         </Section>
       )}
 
-      {isTauri && (
+      {isDesktopShell && (
         <Section
           title={t("Discord Rich Presence")}
           subtitle={t("Let your Discord friends see what you are watching, with the show poster and a live progress bar. Desktop only, and only your own Discord client is involved (nothing touches a Harbor server).")}
@@ -692,15 +695,15 @@ function LibraryRepairRow() {
     }
     if (!progress) return t("Rewrites every library item to match Stremio's exact schema. Run once if your Stremio app started crashing after Harbor synced playback.");
     if (progress.phase === "fetching") {
-      return progress.total ? t("Fetching {n} items…", { n: progress.total }) : t("Fetching library index…");
+      return progress.total ? t("Fetching {n} itemsâ€¦", { n: progress.total }) : t("Fetching library indexâ€¦");
     }
     if (progress.phase === "normalizing") {
       return progress.needsRepair != null
         ? t("{n} items need repair.", { n: progress.needsRepair })
-        : t("Checking {n} items…", { n: progress.total ?? 0 });
+        : t("Checking {n} itemsâ€¦", { n: progress.total ?? 0 });
     }
     if (progress.phase === "pushing") {
-      return t("Pushing {pushed} of {total}…", { pushed: progress.pushed ?? 0, total: progress.needsRepair ?? 0 });
+      return t("Pushing {pushed} of {total}â€¦", { pushed: progress.pushed ?? 0, total: progress.needsRepair ?? 0 });
     }
     return t("Done.");
   })();
@@ -709,7 +712,7 @@ function LibraryRepairRow() {
     <ActionRow
       label={t("Repair library")}
       sub={statusLine}
-      cta={busy ? t("Working…") : result ? t("Run again") : t("Repair now")}
+      cta={busy ? t("Workingâ€¦") : result ? t("Run again") : t("Repair now")}
       icon={busy ? <Loader2 size={13} strokeWidth={2.4} className="animate-spin" /> : <Wrench size={13} strokeWidth={2.4} />}
       onClick={run}
       disabled={busy}
@@ -764,23 +767,23 @@ function AnimeRepairRow() {
   }
 
   const names =
-    found.slice(0, 4).map((i) => i.name || i._id).join(", ") + (found.length > 4 ? "…" : "");
+    found.slice(0, 4).map((i) => i.name || i._id).join(", ") + (found.length > 4 ? "â€¦" : "");
   const showRemove = phase === "scanned" && found.length > 0;
   const busy = phase === "scanning" || phase === "removing";
   const sub = (() => {
     if (error) return t("Failed: {error}", { error });
-    if (phase === "scanning") return t("Scanning your library…");
+    if (phase === "scanning") return t("Scanning your libraryâ€¦");
     if (phase === "scanned")
       return found.length === 0
         ? t("No issues found. Your anime library looks clean.")
         : t("Found {n}: {names}. These are saved under the wrong id, which breaks Continue Watching and Trakt marking.", { n: found.length, names });
-    if (phase === "removing") return t("Removing…");
+    if (phase === "removing") return t("Removingâ€¦");
     if (phase === "done") return t("Removed {n}. Rewatch and they re-add correctly.", { n: removed });
     return t("Finds anime saved under a movie or series id (which breaks Continue Watching and Trakt) and removes just those so they re-add correctly.");
   })();
   const cta = (() => {
-    if (phase === "scanning") return t("Scanning…");
-    if (phase === "removing") return t("Removing…");
+    if (phase === "scanning") return t("Scanningâ€¦");
+    if (phase === "removing") return t("Removingâ€¦");
     if (showRemove) return t("Remove {n}", { n: found.length });
     if (phase === "done" || phase === "error" || (phase === "scanned" && found.length === 0))
       return t("Scan again");

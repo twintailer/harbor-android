@@ -42,6 +42,9 @@ librqbit = { version = "=8.1.1", default-features = false, features = ["rust-tls
 url = "2"
 realfft = "3"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-native-player = { path = "tauri-plugin-native-player" }
+
 # Desktop-only dependencies: libmpv rendering, updater, tray/window helpers and
 # Discord IPC do not exist on iOS/Android.
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]

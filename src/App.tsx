@@ -466,6 +466,53 @@ function Shell() {
   
   useEffect(() => startMaintenance(), []);
 
+  // Mobile shell: swiping right from the left screen edge navigates back,
+  // matching the platform gesture users expect. Disabled while the player is
+  // open so it cannot collide with seek/volume gestures.
+  const playerOpenRef = useRef(!!player);
+  playerOpenRef.current = !!player;
+  const canGoBackRef = useRef(canGoBack);
+  canGoBackRef.current = canGoBack;
+  useEffect(() => {
+    if (!isMobileTauri()) return;
+    let startX = 0;
+    let startY = 0;
+    let startT = 0;
+    let tracking = false;
+    const onStart = (e: TouchEvent) => {
+      if (playerOpenRef.current || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.clientX > 28) return;
+      startX = t.clientX;
+      startY = t.clientY;
+      startT = Date.now();
+      tracking = true;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > 70 && dy < 60 && Date.now() - startT < 700 && canGoBackRef.current) {
+        const localBack = new Event("harbor:local-back", { cancelable: true });
+        if (window.dispatchEvent(localBack)) goBack();
+      }
+    };
+    const onCancel = () => {
+      tracking = false;
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchend", onEnd, { passive: true });
+    window.addEventListener("touchcancel", onCancel, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onCancel);
+    };
+  }, [goBack]);
+
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button === 3) {

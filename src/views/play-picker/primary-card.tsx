@@ -68,7 +68,13 @@ export function PrimaryCard({
     <section className="relative overflow-hidden rounded-[24px] border border-edge-soft/70 bg-canvas/85 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-ink/12 to-transparent" />
 
-      <div className={`grid gap-7 p-7 ${isLandscape ? "grid-cols-[320px_1fr] items-center" : "grid-cols-[224px_1fr]"}`}>
+      <div
+        className={`grid gap-4 p-4 sm:gap-7 sm:p-7 ${
+          isLandscape
+            ? "grid-cols-1 items-center sm:grid-cols-[320px_1fr]"
+            : "grid-cols-[104px_1fr] sm:grid-cols-[224px_1fr]"
+        }`}
+      >
         <div
           className={`relative overflow-hidden rounded-[16px] bg-canvas/50 ring-1 ring-edge-soft/60 ${
             isLandscape ? "aspect-video self-center" : "aspect-[2/3]"

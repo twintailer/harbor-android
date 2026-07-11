@@ -1,0 +1,18 @@
+[default]
+description = "Allows the webview to drive the native video player."
+permissions = [
+    "allow-probe",
+    "allow-load",
+    "allow-play",
+    "allow-pause",
+    "allow-stop",
+    "allow-seek",
+    "allow-set-volume",
+    "allow-set-muted",
+    "allow-set-rate",
+    "allow-set-audio-track",
+    "allow-set-subtitle-track",
+    "allow-add-subtitle",
+    "allow-lock-landscape",
+    "allow-unlock-orientation",
+]

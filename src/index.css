@@ -28,9 +28,12 @@
 }
 
 /* Touch polish for the mobile shell: no tap flash, no long-press callouts on
-   chrome, no rubber-band overscroll behind the app. */
+   chrome, no rubber-band overscroll behind the app. The reduced root font
+   size scales every rem-based Tailwind spacing/text down ~12% so the desktop
+   layout densities fit a phone. */
 :root[data-os="ios"],
 :root[data-os="android"] {
+  font-size: 14px;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
@@ -38,6 +41,19 @@
 :root[data-os="android"] button {
   -webkit-touch-callout: none;
   user-select: none;
+}
+
+/* While the native (VLCKit) player renders behind the webview, everything
+   between the HTML chrome and the video must be see-through. */
+:root[data-native-video="1"],
+:root[data-native-video="1"] body,
+:root[data-native-video="1"] #root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+:root[data-native-video="1"] [data-harbor-player] {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 @font-face {

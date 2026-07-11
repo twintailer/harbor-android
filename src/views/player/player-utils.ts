@@ -1,5 +1,6 @@
 import { createHtml5Bridge } from "@/lib/player/html5";
 import { createMpvBridge, probeMpv, type MpvRect } from "@/lib/player/mpv";
+import { createNativeBridge, probeNativePlayer } from "@/lib/player/native";
 import type { PlayerBridge } from "@/lib/player/bridge";
 import { isLinuxDesktop, isMacDesktop, isMobileTauri } from "@/lib/platform";
 
@@ -68,8 +69,12 @@ export async function pickBridge(
   },
 ): Promise<{ bridge: PlayerBridge; engine: "html5" | "mpv" }> {
   if (want === "html5") return { bridge: createHtml5Bridge(), engine: "html5" };
-  // Mobile shells (iOS/Android) have no libmpv; decode in the webview.
-  if (isMobileTauri()) return { bridge: createHtml5Bridge(), engine: "html5" };
+  // Mobile shells: prefer the native VLCKit backend (plays MKV/HEVC/etc.),
+  // fall back to in-webview HTML5 decode when the plugin is unavailable.
+  if (isMobileTauri()) {
+    if (await probeNativePlayer()) return { bridge: createNativeBridge(), engine: "html5" };
+    return { bridge: createHtml5Bridge(), engine: "html5" };
+  }
   if (want === "mpv") {
     const probe = await probeMpv();
     if (probe.available) return { bridge: createMpvBridge(mpvOpts), engine: "mpv" };

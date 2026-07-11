@@ -308,6 +308,10 @@ type NavItem = {
   keywords?: string[];
 };
 
+// Sections that only configure desktop machinery (libmpv, keyboard hotkeys,
+// the desktop player layout editor) are hidden on the phone shell.
+const MOBILE_HIDDEN_SECTIONS = new Set<SectionId>(["mpv", "playerLayout", "hotkeys"]);
+
 const NAV_GROUPS: Array<{ heading: string | null; items: NavItem[] }> = [
   {
     heading: null,
@@ -1094,6 +1098,7 @@ export function SettingsNav({
     for (const group of NAV_GROUPS) {
       const groupHit = group.heading?.toLowerCase().includes(trimmed) ?? false;
       for (const item of group.items) {
+        if (mobile && MOBILE_HIDDEN_SECTIONS.has(item.id)) continue;
         const hit =
           groupHit ||
           item.label.toLowerCase().includes(trimmed) ||
@@ -1102,7 +1107,7 @@ export function SettingsNav({
       }
     }
     return out;
-  }, [trimmed]);
+  }, [trimmed, mobile]);
   const optionMatches = useMemo<SettingsOption[] | null>(() => {
     if (!trimmed) return null;
     return SETTINGS_OPTIONS.filter(
@@ -1329,14 +1334,19 @@ export function SettingsNav({
             )}
           </div>
         )}
-        {!matches && NAV_GROUPS.map((group, gi) => (
+        {!matches && NAV_GROUPS.map((group, gi) => {
+          const groupItems = mobile
+            ? group.items.filter((item) => !MOBILE_HIDDEN_SECTIONS.has(item.id))
+            : group.items;
+          if (groupItems.length === 0) return null;
+          return (
           <div key={gi} className="flex flex-col gap-1">
             {group.heading && (
               <div className="px-3.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-ink-subtle/80">
                 {t(group.heading)}
               </div>
             )}
-            {group.items.map(({ id, label, Icon }) => {
+            {groupItems.map(({ id, label, Icon }) => {
               const isActive = id === active;
               const chip = status[id];
               const debridChip = id === "streaming" && debridKeys > 0 ? `${debridKeys}D` : null;
@@ -1393,7 +1403,8 @@ export function SettingsNav({
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
     </nav>
   );
