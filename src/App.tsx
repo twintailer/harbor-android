@@ -166,8 +166,11 @@ function useViewPreloader() {
       void importPlayPicker();
       void importPlayer();
       void importSettings();
-      void importAddons();
       void importDiscover();
+      // Parsing every remaining chunk up front makes the first seconds janky
+      // on phones; those views load on demand there instead.
+      if (isMobileTauri()) return;
+      void importAddons();
       void importPerson();
       void importFilter();
       void importCalendar();

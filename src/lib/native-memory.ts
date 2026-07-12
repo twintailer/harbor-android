@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isMobileTauri } from "@/lib/platform";
 
 export type NativeMem = {
   harborRss: number;
@@ -59,7 +60,8 @@ async function sample(): Promise<void> {
 }
 
 export function startNativeMemory(): () => void {
-  if (!isTauri || timer != null) return () => {};
+  // harbor_process_memory is desktop-only; don't poll a missing command forever.
+  if (!isTauri || isMobileTauri() || timer != null) return () => {};
   void sample();
   const tick = () => {
     void sample();

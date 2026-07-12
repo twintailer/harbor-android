@@ -68,15 +68,27 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
+    // VLCMediaPlayer.stop() must never run on the main thread: it blocks on
+    // the video output teardown, which itself needs the main thread — a
+    // guaranteed deadlock (the app froze when leaving the player). Detach
+    // everything on main, then stop on a background queue and only remove
+    // the drawable view once VLC has fully released it.
+    let stoppingPlayer = player
+    let stoppingView = videoView
     player?.delegate = nil
-    player?.stop()
     player = nil
-    videoView?.removeFromSuperview()
     videoView = nil
     if let webview = self.webview {
       webview.isOpaque = true
       webview.backgroundColor = .black
       webview.scrollView.backgroundColor = .black
+    }
+    stoppingView?.isHidden = true
+    DispatchQueue.global(qos: .userInitiated).async {
+      stoppingPlayer?.stop()
+      DispatchQueue.main.async {
+        stoppingView?.removeFromSuperview()
+      }
     }
   }
 
@@ -194,9 +206,13 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   }
 
   private func teardownPlayerOnly() {
+    // Same main-thread deadlock hazard as teardown(): stop off-main.
+    let stoppingPlayer = player
     player?.delegate = nil
-    player?.stop()
     player = nil
+    DispatchQueue.global(qos: .userInitiated).async {
+      stoppingPlayer?.stop()
+    }
   }
 
   @objc public func play(_ invoke: Invoke) {

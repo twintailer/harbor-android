@@ -85,6 +85,16 @@
   font-size: 22px !important;
 }
 
+/* Every row track promotes itself to a GPU layer (translateZ/will-change)
+   for smooth desktop wheel scrolling. On phones that means one full-track
+   layer (~7000px wide) per rail — massive GPU memory, heat and scroll jank.
+   Native touch scrolling doesn't need the promotion. */
+:root[data-os="ios"] .harbor-row-track,
+:root[data-os="android"] .harbor-row-track {
+  transform: none !important;
+  will-change: auto !important;
+}
+
 /* View transitions on the mobile shell: when a view layer flips from
    display:none back to visible, its root re-renders and this animation
    replays - cheap fade/slide for both forward and back navigation. */
