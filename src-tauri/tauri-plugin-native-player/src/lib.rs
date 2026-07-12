@@ -121,7 +121,21 @@ async fn pause<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn stop<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    proxy!(app, "stop", ())
+    // Fire and forget: even if VLC's stop takes long (slow input teardown),
+    // it must never wedge an async-runtime worker or delay the UI exit.
+    #[cfg(target_os = "ios")]
+    {
+        let handle = app.state::<NativePlayer<R>>().0.clone();
+        std::thread::spawn(move || {
+            let _ = handle.run_mobile_plugin::<serde_json::Value>("stop", ());
+        });
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = &app;
+        Err("stop is not supported on this platform".into())
+    }
 }
 
 #[tauri::command]

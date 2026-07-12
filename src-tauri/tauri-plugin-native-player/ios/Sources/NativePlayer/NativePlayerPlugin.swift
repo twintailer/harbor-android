@@ -84,6 +84,15 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       webview.scrollView.backgroundColor = .black
     }
     stoppingView?.isHidden = true
+    // Rotate back to portrait as part of the same teardown pass so the exit
+    // is one coherent sequence regardless of JS call ordering.
+    if #available(iOS 16.0, *) {
+      let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+      scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+      webview?.window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+    } else {
+      UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+    }
     DispatchQueue.global(qos: .userInitiated).async {
       stoppingPlayer?.stop()
       DispatchQueue.main.async {

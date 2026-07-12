@@ -498,9 +498,11 @@ function Shell() {
       if (!t) return;
       const dx = t.clientX - startX;
       const dy = Math.abs(t.clientY - startY);
-      if (dx > 70 && dy < 60 && Date.now() - startT < 700 && canGoBackRef.current) {
+      if (dx > 70 && dy < 60 && Date.now() - startT < 700) {
+        // Overlays (search, modals) claim the gesture via harbor:local-back
+        // even when the view stack itself has nothing to pop.
         const localBack = new Event("harbor:local-back", { cancelable: true });
-        if (window.dispatchEvent(localBack)) goBack();
+        if (window.dispatchEvent(localBack) && canGoBackRef.current) goBack();
       }
     };
     const onCancel = () => {

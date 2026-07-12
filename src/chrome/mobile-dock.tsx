@@ -39,6 +39,7 @@ export function MobileDock() {
 
   const navigate = (item: NavItem) => {
     setMoreOpen(false);
+    setSearchOpen(false);
     if (item.pinGated && locked) {
       setPendingPinView(item.view);
       return;

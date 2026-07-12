@@ -1,5 +1,6 @@
-import { Search, X, Loader2, CornerDownLeft, CalendarRange, Tag } from "lucide-react";
+import { ArrowLeft, Search, X, Loader2, CornerDownLeft, CalendarRange, Tag } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { isMobileTauri } from "@/lib/platform";
 import { createPortal } from "react-dom";
 import { useT } from "@/lib/i18n";
 import { useSearch } from "@/lib/search-context";
@@ -43,6 +44,18 @@ export function SearchOverlay() {
       document.body.style.overflow = "";
     };
   }, [open]);
+
+  // Back gesture / mouse-back closes the overlay instead of popping the view stack.
+  useEffect(() => {
+    if (!open) return;
+    const onLocalBack = (e: Event) => {
+      e.preventDefault();
+      if (query.trim() && results) recordRecent(query);
+      setOpen(false);
+    };
+    window.addEventListener("harbor:local-back", onLocalBack);
+    return () => window.removeEventListener("harbor:local-back", onLocalBack);
+  }, [open, query, results, recordRecent, setOpen]);
 
   if (!open) return null;
 
@@ -118,6 +131,16 @@ export function SearchOverlay() {
             aiMode ? "border-accent/55" : "border-edge-soft/80"
           }`}
         >
+          {isMobileTauri() && (
+            <button
+              type="button"
+              aria-label={t("Close search")}
+              onClick={close}
+              className="-ms-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-muted active:bg-canvas/60"
+            >
+              <ArrowLeft size={21} strokeWidth={2} />
+            </button>
+          )}
           <Search
             size={22}
             className={`shrink-0 transition-colors ${aiMode ? "text-accent" : "text-ink-muted"}`}
