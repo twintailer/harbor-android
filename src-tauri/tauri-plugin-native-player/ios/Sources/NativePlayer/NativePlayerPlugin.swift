@@ -86,13 +86,10 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       webview.scrollView.backgroundColor = .black
     }
     stoppingView?.removeFromSuperview()
-    if #available(iOS 16.0, *) {
-      let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-      scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-      webview?.window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-    } else {
-      UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
-    }
+    // Orientation is reset separately by the JS unmount (unlock_orientation).
+    // Doing it here too, synchronously in the same pass as the React teardown
+    // of the whole player UI, raced the rotation with the webview relayout and
+    // hung the app on the back button.
     if let stoppingPlayer = stoppingPlayer {
       DispatchQueue.global(qos: .userInitiated).async { stoppingPlayer.stop() }
     }
@@ -374,7 +371,11 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   }
 
   @objc public func unlockOrientation(_ invoke: Invoke) {
-    DispatchQueue.main.async { [weak self] in
+    // Resolve first, then rotate on a later runloop turn. Rotating in the same
+    // pass that React is tearing the player UI down raced the webview relayout
+    // and hung the app on the back button.
+    invoke.resolve()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
       if #available(iOS 16.0, *) {
         let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
         scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
@@ -384,7 +385,6 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
         UIDevice.current.setValue(
           UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
       }
-      invoke.resolve()
     }
   }
 }

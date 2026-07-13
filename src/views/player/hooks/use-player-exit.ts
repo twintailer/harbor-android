@@ -53,7 +53,7 @@ export function usePlayerExit(params: {
   } = params;
 
   const closePlayer = useCallback(async () => {
-    await captureExitSnapshot();
+    // Save resume position synchronously first — it must never be skipped.
     const pos = getPlaybackPosition();
     if (Number.isFinite(pos) && pos > 0) {
       saveResumeMs(src.meta.id, pos * 1000, season, episode);
@@ -66,22 +66,35 @@ export function usePlayerExit(params: {
         );
       }
     }
-    await exitPip();
-    if (castActiveRef.current) await stopCast().catch(() => {});
-    await exitWindowFullscreenOnPlayerClose();
-    if (inRoom && isHost) {
-      publishState({
-        mediaId: null,
-        mediaTitle: null,
-        episode: null,
-        posterUrl: null,
-        positionSeconds: 0,
-        playing: false,
-      });
-      notifyHostLeaving();
-      clearInvite();
+    // Everything else is best-effort cleanup. If any of it hangs (a native
+    // snapshot/PiP/cast call that never resolves on mobile), the player must
+    // still close — otherwise the app looks frozen. Cap the whole batch and
+    // always run exitPlayback() in the finally.
+    try {
+      await Promise.race([
+        (async () => {
+          await captureExitSnapshot().catch(() => {});
+          await exitPip().catch(() => {});
+          if (castActiveRef.current) await stopCast().catch(() => {});
+          await exitWindowFullscreenOnPlayerClose().catch(() => {});
+          if (inRoom && isHost) {
+            publishState({
+              mediaId: null,
+              mediaTitle: null,
+              episode: null,
+              posterUrl: null,
+              positionSeconds: 0,
+              playing: false,
+            });
+            notifyHostLeaving();
+            clearInvite();
+          }
+        })(),
+        new Promise<void>((resolve) => setTimeout(resolve, 700)),
+      ]);
+    } finally {
+      exitPlayback();
     }
-    exitPlayback();
   }, [captureExitSnapshot, exitPlayback, src.meta.id, src.meta.name, season, episode, inRoom, isHost, notifyHostLeaving, clearInvite, publishState, exitPip, liveStreamRef, liveUrl, src.url, stopCast, castActiveRef]);
 
   const onStubEject = useCallback(() => {
