@@ -46,9 +46,6 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   private var appliedStartAt = true
   private var lastTracksSignature = ""
   private var lastTimeEmit: TimeInterval = 0
-  // All VLCMediaPlayer.stop() calls run here, never on main: stop blocks on
-  // the video-output teardown which needs the main thread -> deadlock.
-  private let stopQueue = DispatchQueue(label: "app.harbor.vlc.stop")
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
@@ -71,14 +68,16 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
-    // VLCMediaPlayer.stop() must never run on the main thread: it blocks on
-    // the video output teardown, which itself needs the main thread — a
-    // guaranteed deadlock (the app froze when leaving the player). Detach
-    // everything on main, then stop on a background queue and only remove
-    // the drawable view once VLC has fully released it.
+    // The UI must recover instantly on exit. Detach the player and remove its
+    // view right here on the main thread; stop() is dispatched afterwards and
+    // never blocks anything the user is waiting on. stop() runs on a plain
+    // concurrent global queue — never main (on-main stop deadlocks on the
+    // video-output teardown) and never a *serial* queue (a stalled network
+    // stop() would then block every later teardown, which froze the back
+    // button).
     let stoppingPlayer = player
     let stoppingView = videoView
-    player?.delegate = nil
+    stoppingPlayer?.delegate = nil
     player = nil
     videoView = nil
     if let webview = self.webview {
@@ -86,9 +85,7 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       webview.backgroundColor = .black
       webview.scrollView.backgroundColor = .black
     }
-    stoppingView?.isHidden = true
-    // Rotate back to portrait as part of the same teardown pass so the exit
-    // is one coherent sequence regardless of JS call ordering.
+    stoppingView?.removeFromSuperview()
     if #available(iOS 16.0, *) {
       let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
       scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
@@ -96,11 +93,8 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
     } else {
       UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
     }
-    stopQueue.async {
-      stoppingPlayer?.stop()
-      DispatchQueue.main.async {
-        stoppingView?.removeFromSuperview()
-      }
+    if let stoppingPlayer = stoppingPlayer {
+      DispatchQueue.global(qos: .userInitiated).async { stoppingPlayer.stop() }
     }
   }
 
@@ -217,8 +211,8 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       // spins up) contend on the shared libvlc instance and hang the app on the
       // next-episode switch. stop() must run off the main thread (it blocks on
       // the video-output teardown which needs main -> deadlock), so we stop the
-      // old player on a serial queue and only then start the new one. A timeout
-      // guards against a network stream whose stop() stalls.
+      // old player on a background thread and only then start the new one. A
+      // timeout guards against a network stream whose stop() stalls.
       let oldPlayer = self.player
       let oldView = self.videoView
       oldPlayer?.delegate = nil
@@ -258,7 +252,7 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       }
 
       if let oldPlayer = oldPlayer {
-        self.stopQueue.async {
+        DispatchQueue.global(qos: .userInitiated).async {
           oldPlayer.stop()
           DispatchQueue.main.async(execute: startNew)
         }
