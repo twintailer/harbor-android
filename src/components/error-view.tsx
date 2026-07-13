@@ -33,6 +33,9 @@ function isNoisyError(reason: unknown, message?: string): boolean {
   if (m.includes("not available on mobile")) return true;
   if (m.includes("not supported on mobile")) return true;
   if (isMobileTauri() && (m.includes("plugin:window|") || m.includes("plugin:webview|"))) return true;
+  // Any ACL gap on mobile is a packaging mistake, never user-actionable — the
+  // action silently no-ops instead of nuking the whole UI with an error view.
+  if (isMobileTauri() && m.includes("not allowed by acl")) return true;
   if (r?.name === "AbortError") return true;
   if (r?.name === "NetworkError") return true;
   return false;

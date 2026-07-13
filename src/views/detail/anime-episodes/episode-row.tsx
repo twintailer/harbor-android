@@ -61,9 +61,9 @@ export function AnimeEpisodeRow({
     >
       <button
         onClick={() => openPicker(epMeta, playEpisode, { autoPlay: settings.instantPlay })}
-        className="flex min-w-0 flex-1 gap-6 text-start"
+        className="flex min-w-0 flex-1 gap-6 text-start max-sm:flex-col max-sm:gap-2.5"
       >
-        <div className="relative w-[200px] shrink-0">
+        <div className="relative w-[200px] shrink-0 max-sm:w-full">
           <div className={spoiler?.thumb ? `overflow-hidden rounded-lg ${SPOILER_THUMB_CLASS}` : undefined}>
             <Poster src={ep.thumbnail ?? undefined} seed={String(ep.id)} ratio="landscape" className="rounded-lg" lazy fallbacks={[ep.thumbnailFallback, meta.background]} />
           </div>

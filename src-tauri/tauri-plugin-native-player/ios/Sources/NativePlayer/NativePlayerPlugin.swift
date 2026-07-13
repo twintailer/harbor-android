@@ -48,6 +48,19 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
+    // Returning from the background drops the requested geometry; re-assert
+    // landscape while a video is active so the player does not come back in
+    // portrait.
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      guard let self = self, self.player != nil else { return }
+      if #available(iOS 16.0, *) {
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape))
+        self.webview?.window?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+      }
+    }
   }
 
   // MARK: helpers
@@ -198,16 +211,23 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       guard let self = self else { return }
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
-      self.teardownPlayerOnly()
       self.ensureVideoView()
-      let player = VLCMediaPlayer()
+      // Reuse the existing player for subsequent loads (next episode, stream
+      // switch): swapping media on a live player avoids the vout teardown
+      // entirely — recreating it mid-session raced the old instance and hung.
+      let player: VLCMediaPlayer
+      if let existing = self.player {
+        player = existing
+      } else {
+        player = VLCMediaPlayer()
+        self.player = player
+      }
       player.drawable = self.videoView
       player.delegate = self
       player.media = VLCMedia(url: url)
       self.pendingStartAt = args.startAtSec ?? 0
       self.appliedStartAt = self.pendingStartAt <= 0
       self.lastTracksSignature = ""
-      self.player = player
       UIApplication.shared.isIdleTimerDisabled = true
       player.play()
       invoke.resolve()

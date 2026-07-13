@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 import type { SectionId } from "./shared";
 
 type Item = { id: string; title: string };
@@ -12,6 +13,8 @@ export function SettingsJumpBar({
   activeSection: SectionId;
 }) {
   const t = useT();
+  // Desktop affordance: on phones it collides with the bottom dock.
+  if (isMobileTauri()) return null;
   const [items, setItems] = useState<Item[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [scrollable, setScrollable] = useState(false);

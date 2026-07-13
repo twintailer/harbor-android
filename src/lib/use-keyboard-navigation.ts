@@ -36,15 +36,6 @@ const CENTER_KEYCODES = new Set([13, 23, 32]);
 const BACK_KEYCODES = new Set([27, 4, 461, 10009, 166]);
 const BACK_KEYS = new Set(['Escape', 'Esc', 'BrowserBack', 'GoBack', 'Back']);
 
-const MODAL_SELECTOR = '[role="dialog"], [aria-modal="true"]';
-const LOCAL_KEYBOARD_SELECTOR = [
-  '[role="listbox"]',
-  '[role="menu"]',
-  '[role="grid"]',
-  '[role="tree"]',
-  '[role="tablist"]',
-].join(', ');
-
 // FIX #3: was 5px — way too tight for TV-scale layouts where cards/rows
 // are large and have padding/margins that create small axis offsets.
 // A small tolerance rejected valid neighbors or accepted wrong ones,
@@ -89,24 +80,13 @@ function zoneOf(el: HTMLElement): 'nav' | 'hero' | 'content' {
 // exactly what causes "it moves between elements but doesn't understand
 // left/right" — it's often hopping between a card and its own child.
 // Rule: only the OUTERMOST matching element per DOM branch is kept.
-function getFocusable(root: ParentNode = document): HTMLElement[] {
-  const all = Array.from(root.querySelectorAll<HTMLElement>(SELECTOR)).filter(isVisible);
+function getFocusable(): HTMLElement[] {
+  const all = Array.from(document.querySelectorAll<HTMLElement>(SELECTOR)).filter(isVisible);
   return all.filter((el) => !all.some((other) => other !== el && other.contains(el)));
 }
 
-function getFocusableInZone(zone: 'nav' | 'hero' | 'content', root: ParentNode = document): HTMLElement[] {
-  return getFocusable(root).filter((el) => zoneOf(el) === zone);
-}
-
-function getActiveModal(target: HTMLElement | null): HTMLElement | null {
-  const owned = target?.closest<HTMLElement>(MODAL_SELECTOR);
-  if (owned && isVisible(owned)) return owned;
-  const visible = Array.from(document.querySelectorAll<HTMLElement>(MODAL_SELECTOR)).filter(isVisible);
-  return visible[visible.length - 1] ?? null;
-}
-
-function isLocallyManaged(target: HTMLElement | null): boolean {
-  return !!target?.closest(LOCAL_KEYBOARD_SELECTOR);
+function getFocusableInZone(zone: 'nav' | 'hero' | 'content'): HTMLElement[] {
+  return getFocusable().filter((el) => zoneOf(el) === zone);
 }
 
 function getRect(el: HTMLElement) {
@@ -247,19 +227,13 @@ export function useKeyboardNavigation(options: TVNavigationOptions = {}) {
 
   useEffect(() => {
     if (!enabled) return;
-
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if (e.altKey || e.ctrlKey || e.metaKey) return;
 
       const target = e.target instanceof HTMLElement ? e.target : null;
 
-      if (isEditable(target)) return;
-
-      const activeModal = getActiveModal(target);
-
       if (isBackKey(e)) {
-        if (activeModal) return;
         e.preventDefault();
         e.stopPropagation();
         const handled = onBack ? onBack() : false;
@@ -276,10 +250,11 @@ export function useKeyboardNavigation(options: TVNavigationOptions = {}) {
         return;
       }
 
+      if (isEditable(target)) return;
+
       const dir = getDirection(e);
 
       if (dir) {
-        if (isLocallyManaged(target)) return;
         e.preventDefault();
         e.stopPropagation();
 
@@ -287,8 +262,7 @@ export function useKeyboardNavigation(options: TVNavigationOptions = {}) {
           document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
         const zone = active ? zoneOf(active) : 'content';
-        const root = activeModal ?? document;
-        const all = getFocusableInZone(zone, root);
+        const all = getFocusableInZone(zone);
         if (!all.length) return;
 
         if (!active || !all.includes(active)) {
@@ -299,7 +273,7 @@ export function useKeyboardNavigation(options: TVNavigationOptions = {}) {
 
         if (zone === 'hero' && (dir === 'up' || dir === 'down')) {
           if (dir === 'down') {
-            const contentItems = getFocusableInZone('content', root);
+            const contentItems = getFocusableInZone('content');
             const first = getInitialFocus(contentItems);
             if (first) focusElement(first);
           }
@@ -328,8 +302,6 @@ export function useKeyboardNavigation(options: TVNavigationOptions = {}) {
 
       const isCenter = CENTER_KEYCODES.has(e.keyCode) || e.key === 'Enter' || e.code === 'Enter';
       if (!isCenter) return;
-
-      if (isLocallyManaged(target)) return;
 
       const active =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;

@@ -20,6 +20,10 @@
       ]
     },
     {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [{ "path": "**" }]
+    },
+    {
       "identifier": "http:default",
       "allow": [
         { "url": "https://*:*/**" },

@@ -80,7 +80,7 @@ export function EpisodeRow({
       data-no-card-ring
       onContextMenu={(e) => onContextMenu?.(e, ep.seasonNumber, ep.episodeNumber, progress.watched)}
       onMouseEnter={() => prefetchSegments(meta, playEpisode)}
-      className="group flex gap-6 rounded-2xl px-4 py-5 transition-colors hover:bg-elevated/30"
+      className="group flex gap-6 rounded-2xl px-4 py-5 transition-colors hover:bg-elevated/30 max-sm:gap-3 max-sm:px-2 max-sm:py-3"
     >
       <button
         onClick={() =>
@@ -93,9 +93,9 @@ export function EpisodeRow({
           })
         }
         onFocus={() => prefetchSegments(meta, playEpisode)}
-        className="flex min-w-0 flex-1 gap-6 text-start"
+        className="flex min-w-0 flex-1 gap-6 text-start max-sm:flex-col max-sm:gap-2.5"
       >
-        <div className="relative w-[200px] shrink-0 overflow-hidden rounded-lg">
+        <div className="relative w-[200px] shrink-0 overflow-hidden rounded-lg max-sm:w-full">
           <div className={spoiler?.thumb ? SPOILER_THUMB_CLASS : undefined}>
             <Poster
               src={still}

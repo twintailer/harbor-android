@@ -87,7 +87,7 @@ import { AnilistProvider } from "@/lib/anilist/provider";
 import { MalProvider } from "@/lib/mal/provider";
 import { SimklProvider } from "@/lib/simkl/provider";
 import { LetterboxdProvider } from "@/lib/stremboxd/provider";
-import { useKeyboardNavigation } from './useKeyboardNavigation';
+import { useKeyboardNavigation } from "@/lib/use-keyboard-navigation";
 
 const importAnime = () => import("@/views/anime");
 const importCalendar = () => import("@/views/calendar");
@@ -450,6 +450,7 @@ function Shell() {
   useViewPreloader();
 
   useKeyboardNavigation({
+    enabled: !player,
     wrap: false,
     onBack: () => {
       if (stackKinds.length > 1 || topKind !== "home") {
@@ -838,7 +839,7 @@ function Shell() {
         {settingsAlive && (
           <div className={layer(settingsTop)}>
             <Suspense fallback={null}>
-              <Settings />
+              <Settings active={settingsTop} />
             </Suspense>
           </div>
         )}
@@ -1027,7 +1028,7 @@ function Shell() {
                 key={`picker-${picker.meta.id}-${picker.episode?.season ?? ""}-${picker.episode?.episode ?? ""}-${picker.attempt ?? 0}-${picker.intent ?? "play"}`}
                 meta={picker.meta}
                 episode={picker.episode}
-                autoPlay={picker.intent === "download" ? false : picker.autoPlay}
+                autoPlay={picker.intent === "download" || picker.intent === "download-season" ? false : picker.autoPlay}
                 attempt={picker.attempt}
                 intent={picker.intent}
                 resume={picker.resume}

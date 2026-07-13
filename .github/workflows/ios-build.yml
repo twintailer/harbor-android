@@ -129,6 +129,10 @@ jobs:
           modes.add("audio")
           info["UIBackgroundModes"] = sorted(modes)
 
+          # Downloads land in the app's Documents folder; expose it in Files.
+          info["UIFileSharingEnabled"] = True
+          info["LSSupportsOpeningDocumentsInPlace"] = True
+
           # Allow rotating into landscape (the player locks itself there).
           orientations = [
               "UIInterfaceOrientationPortrait",

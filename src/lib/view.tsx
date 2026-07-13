@@ -5,6 +5,7 @@ import type { StreamingService } from "./settings";
 import { useTogether } from "./together/provider";
 import type { SportsGame } from "./sports/espn";
 import { beginMarathonAdvance } from "./fullscreen-state";
+import { runNavGuard } from "./nav-guard";
 export type View = "home" | "settings" | "anime" | "discover" | "catalogs" | "addons" | "calendar" | "movies" | "shows" | "kids" | "library" | "live" | "vod" | "downloads";
 
 export type PlayEpisode = {
@@ -102,7 +103,7 @@ export type Frame =
   | { kind: "grid"; grid: GridSpec }
   | { kind: "award"; awardType: import("./providers/wikidata").AwardType }
   | { kind: "anime-award"; sourceId: import("./anime-awards").AwardSourceId }
-  | { kind: "picker"; meta: Meta; episode?: PlayEpisode; autoPlay?: boolean; attempt?: number; intent?: "play" | "download"; resume?: boolean }
+  | { kind: "picker"; meta: Meta; episode?: PlayEpisode; autoPlay?: boolean; attempt?: number; intent?: "play" | "download" | "download-season"; resume?: boolean }
   | { kind: "player"; src: PlayerSrc }
   | { kind: "match-detail"; game: SportsGame };
 
@@ -159,11 +160,11 @@ type ViewValue = {
   animeAwardSource: import("./anime-awards").AwardSourceId | null;
   openAnimeAward: (s: import("./anime-awards").AwardSourceId) => void;
   homeResetTick: number;
-  picker: { meta: Meta; episode?: PlayEpisode; autoPlay?: boolean; attempt?: number; intent?: "play" | "download"; resume?: boolean } | null;
+  picker: { meta: Meta; episode?: PlayEpisode; autoPlay?: boolean; attempt?: number; intent?: "play" | "download" | "download-season"; resume?: boolean } | null;
   openPicker: (
     meta: Meta,
     episode?: PlayEpisode,
-    opts?: { autoPlay?: boolean; attempt?: number; intent?: "play" | "download"; resume?: boolean },
+    opts?: { autoPlay?: boolean; attempt?: number; intent?: "play" | "download" | "download-season"; resume?: boolean },
   ) => void;
   player: PlayerSrc | null;
   openPlayer: (src: PlayerSrc) => void;
@@ -392,24 +393,32 @@ export function ViewProvider({ children }: { children: ReactNode }) {
   const pop = useCallback(() => {
     const cur = stackRef.current;
     if (cur.length <= 1) return;
-    const nextStack = cur.slice(0, -1);
-    const nextForwardStack = pushFrame(forwardStackRef.current, cur[cur.length - 1]);
-    stackRef.current = nextStack;
-    forwardStackRef.current = nextForwardStack;
-    setStack(nextStack);
-    setForwardStack(nextForwardStack);
+    const commit = () => {
+      const nextStack = cur.slice(0, -1);
+      const nextForwardStack = pushFrame(forwardStackRef.current, cur[cur.length - 1]);
+      stackRef.current = nextStack;
+      forwardStackRef.current = nextForwardStack;
+      setStack(nextStack);
+      setForwardStack(nextForwardStack);
+    };
+    if (runNavGuard(commit)) return;
+    commit();
   }, []);
 
   const goForward = useCallback(() => {
     const curForward = forwardStackRef.current;
     const nextFrame = curForward[curForward.length - 1];
     if (!nextFrame) return;
-    const nextForwardStack = curForward.slice(0, -1);
-    const nextStack = pushFrame(stackRef.current, nextFrame);
-    stackRef.current = nextStack;
-    forwardStackRef.current = nextForwardStack;
-    setStack(nextStack);
-    setForwardStack(nextForwardStack);
+    const commit = () => {
+      const nextForwardStack = curForward.slice(0, -1);
+      const nextStack = pushFrame(stackRef.current, nextFrame);
+      stackRef.current = nextStack;
+      forwardStackRef.current = nextForwardStack;
+      setStack(nextStack);
+      setForwardStack(nextForwardStack);
+    };
+    if (runNavGuard(commit)) return;
+    commit();
   }, []);
 
   const clearForwardStack = useCallback(() => {
@@ -460,7 +469,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
     nonce: 0,
   });
 
-  const setView = useCallback((v: View) => {
+  const setViewNow = useCallback((v: View) => {
     if (typeof window !== "undefined") {
       window.__harborProfiler?.recordNav(`view:${v}`);
     }
@@ -546,6 +555,15 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       return pushFrame(s, { kind: "settings" });
     });
   }, [setNavStack]);
+
+  const setView = useCallback(
+    (v: View) => {
+      // Navigating deeper into Settings is not "leaving", so it bypasses the guard.
+      if (v !== "settings" && runNavGuard(() => setViewNow(v))) return;
+      setViewNow(v);
+    },
+    [setViewNow],
+  );
 
   const openSettings = useCallback((section?: SettingsSection) => {
     setSectionReq((r) => ({ section: section ?? null, nonce: r.nonce + 1 }));
@@ -709,7 +727,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
   }, [setNavStack]);
 
   const openPicker = useCallback(
-    (m: Meta, ep?: PlayEpisode, opts?: { autoPlay?: boolean; attempt?: number; intent?: "play" | "download"; resume?: boolean }) => {
+    (m: Meta, ep?: PlayEpisode, opts?: { autoPlay?: boolean; attempt?: number; intent?: "play" | "download" | "download-season"; resume?: boolean }) => {
       if (opts?.autoPlay) beginMarathonAdvance();
       setNavStack((cur) => {
         const t = cur[cur.length - 1];

@@ -52,7 +52,7 @@ export function FeaturedBanner({ items }: { items: Meta[] }) {
         Featured & Recommended
       </h2>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
+      <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4 max-sm:grid-cols-1">
         <BigCardStack items={items} active={safeActive} onPrev={goPrev} onNext={goNext} />
         <SidePanel
           meta={current}
@@ -78,9 +78,9 @@ export function FeaturedBanner({ items }: { items: Meta[] }) {
 
 function BannerSkeleton() {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
+    <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4 max-sm:grid-cols-1">
       <div className="aspect-[16/9] animate-pulse rounded-2xl bg-elevated/30" />
-      <div className="animate-pulse rounded-2xl bg-elevated/25" />
+      <div className="animate-pulse rounded-2xl bg-elevated/25 max-sm:hidden" />
     </div>
   );
 }

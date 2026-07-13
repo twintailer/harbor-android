@@ -1,5 +1,6 @@
 import { Filter, Languages, MousePointerClick, RefreshCw, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { isMobileTauri } from "@/lib/platform";
 import { resolveAddonLogo } from "@/components/addon-logo";
 import { HostSourceBanner } from "@/components/host-source-banner";
 import { Tooltip } from "./transport/tooltip";
@@ -294,7 +295,13 @@ export function StreamSwitcher({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-full max-h-[82vh] w-full max-w-[880px] flex-col overflow-hidden rounded-[8px] border border-edge bg-elevated shadow-[0_28px_72px_-20px_rgba(0,0,0,0.85)] animate-in fade-in slide-in-from-bottom-2 duration-150 backdrop-blur-xl">
+      <div
+        className={`flex h-full w-full flex-col overflow-hidden border border-edge bg-elevated shadow-[0_28px_72px_-20px_rgba(0,0,0,0.85)] animate-in fade-in slide-in-from-bottom-2 duration-150 ${
+          isMobileTauri()
+            ? "max-h-full rounded-none"
+            : "max-h-[82vh] max-w-[880px] rounded-[8px] backdrop-blur-xl"
+        }`}
+      >
         <header className="flex items-center justify-between gap-4 border-b border-edge-soft px-6 py-4">
           <div className="flex items-center gap-2.5">
             <Tooltip label={t("Refresh sources")} side="bottom">

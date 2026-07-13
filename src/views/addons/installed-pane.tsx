@@ -128,7 +128,7 @@ function InstalledRow({
       tabIndex={0}
       onClick={() => !busy && onOpen(idOf(r))}
       onKeyDown={(e) => !busy && (e.key === "Enter" || e.key === " ") && onOpen(idOf(r))}
-      className={`flex items-center gap-3.5 rounded-xl border bg-elevated px-4 py-3 text-start transition-all ${
+      className={`flex items-center gap-3.5 rounded-xl border bg-elevated px-4 py-3 text-start transition-all max-sm:flex-wrap max-sm:gap-y-2.5 ${
         busy
           ? "border-edge-soft cursor-wait opacity-60"
           : "border-edge-soft cursor-pointer hover:border-edge hover:bg-raised"

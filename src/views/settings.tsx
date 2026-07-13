@@ -30,6 +30,7 @@ import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
 import { useT } from "@/lib/i18n";
 import { isMobileTauri } from "@/lib/platform";
+import { SettingsUnsavedChanges } from "./settings/unsaved-changes";
 
 const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
@@ -128,7 +129,7 @@ const SECTION_META: Record<SectionId, { label: string; sub: string }> = {
 
 type SavedKey = LibraryKey | DebridKey;
 
-export function Settings() {
+export function Settings({ active: activeView = true }: { active?: boolean }) {
   const t = useT();
   const { settings, update } = useSettings();
   const [tmdbDraft, setTmdbDraft] = useState(settings.tmdbKey);
@@ -351,6 +352,7 @@ export function Settings() {
       </main>
       <BackToTop scrollRef={scrollRef} />
       <SettingsJumpBar scrollRef={scrollRef} activeSection={active} />
+      <SettingsUnsavedChanges active={activeView} />
     </div>
     </SettingsActiveContext.Provider>
   );

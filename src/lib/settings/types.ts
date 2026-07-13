@@ -288,6 +288,7 @@ export type Settings = {
   keyboardPauseShowsControls: boolean;
   hideWatchedInCatalogs: boolean;
   hideUnreleased: boolean;
+  localEpisodeSortDesc: boolean;
   showPlaylistsTab: boolean;
   skipProfileScreen: boolean;
   profilePromptInterval: "launch" | "15m" | "30m" | "never";
@@ -405,6 +406,7 @@ export type Settings = {
     channels: { discord: boolean; telegram: boolean };
   }>;
   downloadDir: string;
+  downloadCreateFolders: boolean;
   stremioDeeplinkInstall: boolean;
   iptvPlaylists: Array<{
     id: string;
