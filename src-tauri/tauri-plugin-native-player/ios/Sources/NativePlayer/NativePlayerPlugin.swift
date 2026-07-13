@@ -382,21 +382,11 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   }
 
   @objc public func unlockOrientation(_ invoke: Invoke) {
-    // Resolve first, then rotate on a later runloop turn. Rotating in the same
-    // pass that React is tearing the player UI down raced the webview relayout
-    // and hung the app on the back button.
+    // DIAGNOSTIC BUILD: the forced portrait rotation on exit is temporarily
+    // disabled to test whether requestGeometryUpdate is the back-button freeze.
+    // The app simply stays in whatever orientation it is in. If back stops
+    // freezing with this, the rotation was the culprit.
     invoke.resolve()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-      if #available(iOS 16.0, *) {
-        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-        self?.webview?.window?.rootViewController?
-          .setNeedsUpdateOfSupportedInterfaceOrientations()
-      } else {
-        UIDevice.current.setValue(
-          UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
-      }
-    }
   }
 }
 

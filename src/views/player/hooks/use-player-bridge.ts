@@ -8,6 +8,7 @@ import type { Settings } from "@/lib/settings";
 import { setPlaybackClock } from "@/lib/player/playback-clock";
 import { isWindowsDesktop } from "@/lib/platform";
 import { svpEnsureRunning } from "@/lib/svp";
+import { mlog } from "@/lib/mobile-debug";
 import { pickBridge } from "../player-utils";
 
 function snapChangedIgnoringClock(a: PlayerSnapshot, b: PlayerSnapshot): boolean {
@@ -123,12 +124,14 @@ export function usePlayerBridge(params: {
       setBridgeReady(true);
     })();
     return () => {
+      mlog("bridge cleanup: start");
       cancelled = true;
       setBridgeReady(false);
       off?.();
       bridge?.destroy();
       bridgeRef.current = null;
       setPlaybackClock(0, 0);
+      mlog("bridge cleanup: done");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridgeKey]);

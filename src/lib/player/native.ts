@@ -1,4 +1,5 @@
 import { invoke, addPluginListener, type PluginListener } from "@tauri-apps/api/core";
+import { mlog } from "@/lib/mobile-debug";
 import {
   emptySnapshot,
   type PlayerBridge,
@@ -197,12 +198,17 @@ export function createNativeBridge(): PlayerBridge {
       return () => listeners.delete(listener);
     },
     destroy() {
+      mlog("native.destroy: start");
       destroyed = true;
       delete document.documentElement.dataset.nativeVideo;
-      void call("stop");
+      mlog("native.destroy: invoke stop");
+      void invoke(`${PLUGIN}stop`)
+        .then(() => mlog("native.destroy: stop resolved"))
+        .catch((e) => mlog(`native.destroy: stop rejected ${e}`));
       void statusL?.unregister();
       void timeL?.unregister();
       listeners.clear();
+      mlog("native.destroy: done");
     },
   };
 }

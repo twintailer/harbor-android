@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { mlog } from "@/lib/mobile-debug";
 import { resolveChromeTheme } from "@/lib/theme";
 import { useActiveKid } from "@/lib/profiles";
 import { type PlayerBridge } from "@/lib/player/bridge";
@@ -90,6 +91,7 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
       invoke("plugin:native-player|lock_landscape").catch(() => {});
     });
     return () => {
+      mlog("player: unlock_orientation");
       void import("@tauri-apps/api/core").then(({ invoke }) => {
         invoke("plugin:native-player|unlock_orientation").catch(() => {});
       });
@@ -972,7 +974,10 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
           rememberSub: rememberSubChoice,
           pip: togglePipMode,
           cast: () => cast.openCastMenu(null),
-          back: closePlayer,
+          back: () => {
+            mlog("back button tapped");
+            void closePlayer();
+          },
           prevEp: () => goToEpisode(adjacent.prev),
           nextEp: () => goToEpisode(adjacent.next),
           pickAnother: pickAnotherOrGuide,

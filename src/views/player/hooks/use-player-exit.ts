@@ -7,6 +7,7 @@ import { saveResumeMs } from "@/lib/resume";
 import { exitWindowFullscreenOnPlayerClose } from "@/lib/fullscreen-state";
 import type { PartialSyncState } from "@/lib/together/provider";
 import { useView, type PlayerSrc, type PlayerStreamRef } from "@/lib/view";
+import { mlog } from "@/lib/mobile-debug";
 import { MAX_AUTORETRY_ATTEMPTS } from "../player-utils";
 
 const REMEMBER_MIN_SEC = 30;
@@ -53,6 +54,7 @@ export function usePlayerExit(params: {
   } = params;
 
   const closePlayer = useCallback(async () => {
+    mlog("closePlayer: start");
     // Save resume position synchronously first — it must never be skipped.
     const pos = getPlaybackPosition();
     if (Number.isFinite(pos) && pos > 0) {
@@ -73,11 +75,18 @@ export function usePlayerExit(params: {
     try {
       await Promise.race([
         (async () => {
+          mlog("closePlayer: snapshot…");
           await captureExitSnapshot().catch(() => {});
+          mlog("closePlayer: exitPip…");
           await exitPip().catch(() => {});
-          if (castActiveRef.current) await stopCast().catch(() => {});
+          if (castActiveRef.current) {
+            mlog("closePlayer: stopCast…");
+            await stopCast().catch(() => {});
+          }
+          mlog("closePlayer: exitFullscreen…");
           await exitWindowFullscreenOnPlayerClose().catch(() => {});
           if (inRoom && isHost) {
+            mlog("closePlayer: room teardown…");
             publishState({
               mediaId: null,
               mediaTitle: null,
@@ -89,11 +98,14 @@ export function usePlayerExit(params: {
             notifyHostLeaving();
             clearInvite();
           }
+          mlog("closePlayer: cleanup done");
         })(),
         new Promise<void>((resolve) => setTimeout(resolve, 700)),
       ]);
     } finally {
+      mlog("closePlayer: exitPlayback()");
       exitPlayback();
+      mlog("closePlayer: exitPlayback returned");
     }
   }, [captureExitSnapshot, exitPlayback, src.meta.id, src.meta.name, season, episode, inRoom, isHost, notifyHostLeaving, clearInvite, publishState, exitPip, liveStreamRef, liveUrl, src.url, stopCast, castActiveRef]);
 
