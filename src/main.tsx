@@ -109,3 +109,8 @@ requestAnimationFrame(() => {
   boot.classList.add("gone");
   setTimeout(() => boot.remove(), 260);
 });
+
+// Surface the diagnostic log captured right before the previous run froze.
+if (!isPip && !isModal && !isHdrOverlay) {
+  void import("./lib/mobile-debug").then((m) => setTimeout(() => m.showPreviousExitLog(), 800));
+}
