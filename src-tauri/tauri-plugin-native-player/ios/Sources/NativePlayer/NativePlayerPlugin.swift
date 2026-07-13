@@ -68,13 +68,15 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
-    // The UI must recover instantly on exit. Detach the player and remove its
-    // view right here on the main thread; stop() is dispatched afterwards and
-    // never blocks anything the user is waiting on. stop() runs on a plain
-    // concurrent global queue — never main (on-main stop deadlocks on the
-    // video-output teardown) and never a *serial* queue (a stalled network
-    // stop() would then block every later teardown, which froze the back
-    // button).
+    // CRITICAL: never call removeFromSuperview() on a still-playing player's
+    // drawable. Tearing the view out from under a live VLC video output
+    // synchronises with the vout on the main thread and hangs the app — this
+    // was the back-button freeze. Instead make the webview opaque and hide the
+    // video view immediately (so the web UI is visible and responsive at once),
+    // stop the player off the main thread, and only remove the now-dead view
+    // afterwards. stop() runs on a plain concurrent global queue: never main
+    // (on-main stop deadlocks on the vout teardown) and never a shared serial
+    // queue (a stalled network stop() would block later teardowns).
     let stoppingPlayer = player
     let stoppingView = videoView
     stoppingPlayer?.delegate = nil
@@ -85,13 +87,16 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       webview.backgroundColor = .black
       webview.scrollView.backgroundColor = .black
     }
-    stoppingView?.removeFromSuperview()
-    // Orientation is reset separately by the JS unmount (unlock_orientation).
-    // Doing it here too, synchronously in the same pass as the React teardown
-    // of the whole player UI, raced the rotation with the webview relayout and
-    // hung the app on the back button.
-    if let stoppingPlayer = stoppingPlayer {
-      DispatchQueue.global(qos: .userInitiated).async { stoppingPlayer.stop() }
+    stoppingView?.isHidden = true
+    // Orientation is reset separately by the JS unmount (unlock_orientation);
+    // doing it here in the same pass as the React teardown raced the relayout.
+    guard let stoppingPlayer = stoppingPlayer else {
+      stoppingView?.removeFromSuperview()
+      return
+    }
+    DispatchQueue.global(qos: .userInitiated).async {
+      stoppingPlayer.stop()
+      DispatchQueue.main.async { stoppingView?.removeFromSuperview() }
     }
   }
 
@@ -238,20 +243,26 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       UIApplication.shared.isIdleTimerDisabled = true
       invoke.resolve()
 
+      // Start the new player (guarded so the stop-completion and the timeout
+      // can't double-fire it). The old VIEW is never removed here: pulling a
+      // still-playing player's drawable out of the hierarchy hangs the app, so
+      // it is only removed inside the stop completion, after the old player is
+      // actually dead. Until then the old view sits hidden behind the new one.
       var started = false
       let startNew: () -> Void = {
-        // Both callers below run on main, so this guard needs no lock.
         if started { return }
         started = true
-        oldView?.removeFromSuperview()
-        // Only start if this load is still the current one.
         if self.player === newPlayer { newPlayer.play() }
       }
 
       if let oldPlayer = oldPlayer {
+        oldView?.isHidden = true
         DispatchQueue.global(qos: .userInitiated).async {
           oldPlayer.stop()
-          DispatchQueue.main.async(execute: startNew)
+          DispatchQueue.main.async {
+            startNew()
+            oldView?.removeFromSuperview()
+          }
         }
         // Don't wait forever if the old stream's stop() stalls on the network.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: startNew)
