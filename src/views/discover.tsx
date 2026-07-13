@@ -5,6 +5,8 @@ import { CriticsPick } from "@/components/critics-pick";
 import { LazyMount } from "@/components/lazy-mount";
 import { DiscoveryQueueCta } from "@/components/discovery-queue-cta";
 import { FeaturedBanner } from "@/components/featured-banner";
+import { HeroCarousel, type Slide } from "@/components/hero-carousel";
+import { isMobileTauri } from "@/lib/platform";
 import { AwardTiles } from "@/components/award-tiles";
 import { GenreTiles } from "@/components/genre-tiles";
 import { LanguageTiles } from "@/components/language-tiles";
@@ -347,11 +349,30 @@ export function Discover({ active = true }: { active?: boolean }) {
     />
   );
 
+  // Phone shell: a full-bleed swipeable hero (like Home) reads far better than
+  // the desktop two-column featured banner.
+  const mobile = isMobileTauri();
+  const heroSlides: Slide[] = useMemo(
+    () =>
+      featured.slice(0, 8).map((meta, i) => ({
+        meta,
+        rank: { label: t("Featured tonight"), position: i + 1 },
+      })),
+    [featured, t],
+  );
+
   return (
-    <main ref={scrollCb} className="flex-1 overflow-y-auto px-12 pb-20 pt-28">
+    <main
+      ref={scrollCb}
+      className={`flex-1 overflow-y-auto ${mobile ? "px-4 pb-24 pt-2" : "px-12 pb-20 pt-28"}`}
+    >
       <ScrollRootContext.Provider value={scrollEl}>
-        <div data-tauri-drag-region className="flex flex-col gap-14">
-          {pageRows.editMode || !hiddenFeatured ? (
+        <div data-tauri-drag-region className={`flex flex-col ${mobile ? "gap-8" : "gap-14"}`}>
+          {mobile && !hiddenFeatured && heroSlides.length > 0 ? (
+            <div className="-mx-4 -mt-2">
+              <HeroCarousel slides={heroSlides} />
+            </div>
+          ) : pageRows.editMode || !hiddenFeatured ? (
             <div className="relative">
               {pageRows.editMode && (
                 <SectionEditBar

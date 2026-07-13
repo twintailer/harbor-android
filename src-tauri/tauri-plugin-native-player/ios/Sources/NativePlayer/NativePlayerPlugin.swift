@@ -212,12 +212,20 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
 
-      // Double-buffer: each load gets a brand new player AND its own drawable
-      // view. Reusing a live player and just swapping .media does not reliably
-      // restart playback (next episode "loaded" but never started); sharing one
-      // view between the old and new player raced the video output and hung.
-      // A fresh view per player means the old instance can be torn down off the
-      // main thread without ever touching what the new one is rendering into.
+      // Retire the previous player BEFORE the new one starts. Two live
+      // VLCMediaPlayers overlapping (the old one still decoding while a new one
+      // spins up) contend on the shared libvlc instance and hang the app on the
+      // next-episode switch. stop() must run off the main thread (it blocks on
+      // the video-output teardown which needs main -> deadlock), so we stop the
+      // old player on a serial queue and only then start the new one. A timeout
+      // guards against a network stream whose stop() stalls.
+      let oldPlayer = self.player
+      let oldView = self.videoView
+      oldPlayer?.delegate = nil
+      oldView?.isHidden = true
+
+      // Build the new player + its own drawable view now (needs the main
+      // thread), but do not call play() until the old one is torn down.
       let newView = UIView(frame: superview.bounds)
       newView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
       newView.backgroundColor = .black
@@ -231,25 +239,33 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       newPlayer.delegate = self
       newPlayer.media = VLCMedia(url: url)
 
-      let oldPlayer = self.player
-      let oldView = self.videoView
       self.player = newPlayer
       self.videoView = newView
       self.pendingStartAt = args.startAtSec ?? 0
       self.appliedStartAt = self.pendingStartAt <= 0
       self.lastTracksSignature = ""
       UIApplication.shared.isIdleTimerDisabled = true
-      newPlayer.play()
       invoke.resolve()
 
-      // Retire the previous player without blocking the main thread.
+      var started = false
+      let startNew: () -> Void = {
+        // Both callers below run on main, so this guard needs no lock.
+        if started { return }
+        started = true
+        oldView?.removeFromSuperview()
+        // Only start if this load is still the current one.
+        if self.player === newPlayer { newPlayer.play() }
+      }
+
       if let oldPlayer = oldPlayer {
-        oldPlayer.delegate = nil
-        oldView?.isHidden = true
         self.stopQueue.async {
           oldPlayer.stop()
-          DispatchQueue.main.async { oldView?.removeFromSuperview() }
+          DispatchQueue.main.async(execute: startNew)
         }
+        // Don't wait forever if the old stream's stop() stalls on the network.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: startNew)
+      } else {
+        newPlayer.play()
       }
     }
   }
