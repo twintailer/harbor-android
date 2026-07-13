@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Play, X } from "lucide-react";
+import { isMobileTauri } from "@/lib/platform";
 import simklLogo from "@/assets/simkl.png";
 import { meta as fetchMeta, narrowMediaType, type Meta } from "@/lib/cinemeta";
 import { animeKitsuMeta, type AnimeKitsuVideo } from "@/lib/providers/anime-kitsu-addon";
@@ -390,7 +391,9 @@ export const ContinueCard = memo(function ContinueCard({ item, watched = false, 
             onDismiss(item);
           }}
           aria-label={t("Remove from Continue Watching")}
-          className="group/x absolute end-0.5 top-0.5 z-10 flex h-11 w-11 items-center justify-center opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-visible:opacity-100"
+          className={`group/x absolute end-0.5 top-0.5 z-10 flex h-11 w-11 items-center justify-center transition-opacity duration-200 focus-visible:opacity-100 ${
+            isMobileTauri() ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
         >
           <span className="flex h-9 w-9 items-center justify-center rounded-full bg-canvas/85 text-ink-muted ring-1 ring-white/12 backdrop-blur-sm transition-colors group-hover/x:bg-canvas group-hover/x:text-ink">
             <X size={20} strokeWidth={2.4} />

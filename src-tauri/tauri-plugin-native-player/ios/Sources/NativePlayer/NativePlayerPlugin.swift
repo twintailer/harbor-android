@@ -45,6 +45,10 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   private var pendingStartAt: Double = 0
   private var appliedStartAt = true
   private var lastTracksSignature = ""
+  private var lastTimeEmit: TimeInterval = 0
+  // All VLCMediaPlayer.stop() calls run here, never on main: stop blocks on
+  // the video-output teardown which needs the main thread -> deadlock.
+  private let stopQueue = DispatchQueue(label: "app.harbor.vlc.stop")
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
@@ -64,20 +68,6 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   }
 
   // MARK: helpers
-
-  private func ensureVideoView() {
-    guard videoView == nil, let webview = self.webview, let superview = webview.superview else {
-      return
-    }
-    let view = UIView(frame: superview.bounds)
-    view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-    view.backgroundColor = .black
-    superview.insertSubview(view, belowSubview: webview)
-    webview.isOpaque = false
-    webview.backgroundColor = .clear
-    webview.scrollView.backgroundColor = .clear
-    videoView = view
-  }
 
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
@@ -106,7 +96,7 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
     } else {
       UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
     }
-    DispatchQueue.global(qos: .userInitiated).async {
+    stopQueue.async {
       stoppingPlayer?.stop()
       DispatchQueue.main.async {
         stoppingView?.removeFromSuperview()
@@ -183,6 +173,12 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
         self.appliedStartAt = true
         player.time = VLCTime(int: Int32(self.pendingStartAt * 1000))
       }
+      // VLCKit fires this ~4x/second; each emit is a full IPC hop to JS that
+      // re-renders the whole player chrome. Once per ~600ms is plenty for a
+      // seek bar and roughly halves the idle CPU/heat during playback.
+      let now = Date().timeIntervalSince1970
+      if now - self.lastTimeEmit < 0.6 { return }
+      self.lastTimeEmit = now
       var data: JSObject = [:]
       data["positionSec"] = Double(player.time.intValue) / 1000.0
       data["durationSec"] = Double(player.media?.length.intValue ?? 0) / 1000.0
@@ -208,39 +204,53 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       return
     }
     DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
+      guard let self = self, let webview = self.webview, let superview = webview.superview
+      else {
+        invoke.resolve()
+        return
+      }
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
-      self.ensureVideoView()
-      // Reuse the existing player for subsequent loads (next episode, stream
-      // switch): swapping media on a live player avoids the vout teardown
-      // entirely — recreating it mid-session raced the old instance and hung.
-      let player: VLCMediaPlayer
-      if let existing = self.player {
-        player = existing
-      } else {
-        player = VLCMediaPlayer()
-        self.player = player
-      }
-      player.drawable = self.videoView
-      player.delegate = self
-      player.media = VLCMedia(url: url)
+
+      // Double-buffer: each load gets a brand new player AND its own drawable
+      // view. Reusing a live player and just swapping .media does not reliably
+      // restart playback (next episode "loaded" but never started); sharing one
+      // view between the old and new player raced the video output and hung.
+      // A fresh view per player means the old instance can be torn down off the
+      // main thread without ever touching what the new one is rendering into.
+      let newView = UIView(frame: superview.bounds)
+      newView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      newView.backgroundColor = .black
+      superview.insertSubview(newView, belowSubview: webview)
+      webview.isOpaque = false
+      webview.backgroundColor = .clear
+      webview.scrollView.backgroundColor = .clear
+
+      let newPlayer = VLCMediaPlayer()
+      newPlayer.drawable = newView
+      newPlayer.delegate = self
+      newPlayer.media = VLCMedia(url: url)
+
+      let oldPlayer = self.player
+      let oldView = self.videoView
+      self.player = newPlayer
+      self.videoView = newView
       self.pendingStartAt = args.startAtSec ?? 0
       self.appliedStartAt = self.pendingStartAt <= 0
       self.lastTracksSignature = ""
       UIApplication.shared.isIdleTimerDisabled = true
-      player.play()
+      newPlayer.play()
       invoke.resolve()
-    }
-  }
 
-  private func teardownPlayerOnly() {
-    // Same main-thread deadlock hazard as teardown(): stop off-main.
-    let stoppingPlayer = player
-    player?.delegate = nil
-    player = nil
-    DispatchQueue.global(qos: .userInitiated).async {
-      stoppingPlayer?.stop()
+      // Retire the previous player without blocking the main thread.
+      if let oldPlayer = oldPlayer {
+        oldPlayer.delegate = nil
+        oldView?.isHidden = true
+        self.stopQueue.async {
+          oldPlayer.stop()
+          DispatchQueue.main.async { oldView?.removeFromSuperview() }
+        }
+      }
     }
   }
 

@@ -1,3 +1,5 @@
+import { safeFetch } from "@/lib/safe-fetch";
+
 const BASE = "https://harbor.site/api/imdb";
 
 export type ParentalCategory = { category: string; severity: string };
@@ -16,7 +18,7 @@ export async function harborImdbEpisodes(seriesTt: string): Promise<Map<string, 
   if (pending) return pending;
   const p = (async () => {
     try {
-      const res = await fetch(`${BASE}/episodes/${seriesTt}`);
+      const res = await safeFetch(`${BASE}/episodes/${seriesTt}`);
       const map = new Map<string, number>();
       if (res.ok) {
         const j = (await res.json()) as { ratings?: Record<string, number> };
@@ -47,7 +49,7 @@ export async function harborImdbTitle(tt: string): Promise<number | null> {
   if (!tt.startsWith("tt")) return null;
   if (titleCache.has(tt)) return titleCache.get(tt) ?? null;
   try {
-    const res = await fetch(`${BASE}/title/${tt}`);
+    const res = await safeFetch(`${BASE}/title/${tt}`);
     if (!res.ok) {
       titleCache.set(tt, null);
       return null;
@@ -70,7 +72,7 @@ export async function harborImdbParental(tt: string): Promise<ParentalCategory[]
   if (pending) return pending;
   const p = (async () => {
     try {
-      const res = await fetch(`${BASE}/parental/${tt}`);
+      const res = await safeFetch(`${BASE}/parental/${tt}`);
       const out: ParentalCategory[] = [];
       if (res.ok) {
         const j = (await res.json()) as { categories?: ParentalCategory[] };
