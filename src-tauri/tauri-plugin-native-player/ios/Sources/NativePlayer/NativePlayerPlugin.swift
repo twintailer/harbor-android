@@ -405,9 +405,12 @@ class NativePlayerPlugin: Plugin {
 
   private func command(_ args: [String]) {
     guard let mpv = mpv else { return }
-    var cargs: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
+    // strdup gives mutable copies we own and must free; mpv_command wants a
+    // NULL-terminated `const char **`, so hand it UnsafePointer views.
+    let owned: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
+    defer { for p in owned where p != nil { free(p) } }
+    var cargs: [UnsafePointer<CChar>?] = owned.map { $0.map { UnsafePointer($0) } }
     cargs.append(nil)
-    defer { for p in cargs where p != nil { free(p) } }
     cargs.withUnsafeMutableBufferPointer { buf in
       _ = mpv_command(mpv, buf.baseAddress)
     }
