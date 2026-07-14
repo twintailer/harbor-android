@@ -6,26 +6,22 @@
 // an overlay on the NEXT launch. The final line recorded before the freeze
 // pinpoints exactly which step blocked.
 //
-// Disable everything with localStorage "harbor.debugOverlay" = "0".
-
-import { isMobileTauri } from "@/lib/platform";
+// Opt-in: enable with localStorage "harbor.debugOverlay" = "1" (off by default).
 
 const KEY = "harbor.exitLog";
 const LINES: string[] = [];
 let el: HTMLDivElement | null = null;
 let enabled: boolean | null = null;
 
+// Opt-in only: set localStorage "harbor.debugOverlay" = "1" to re-enable the
+// on-screen exit diagnostics. Off by default so normal use shows nothing.
 function isEnabled(): boolean {
   if (enabled !== null) return enabled;
   try {
-    if (localStorage.getItem("harbor.debugOverlay") === "0") {
-      enabled = false;
-      return false;
-    }
+    enabled = localStorage.getItem("harbor.debugOverlay") === "1";
   } catch {
-    /* ignore */
+    enabled = false;
   }
-  enabled = isMobileTauri();
   return enabled;
 }
 
