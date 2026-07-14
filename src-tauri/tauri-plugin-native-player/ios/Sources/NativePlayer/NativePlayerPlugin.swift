@@ -66,15 +66,38 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
   // MARK: helpers
 
-  private func debug(_ msg: String) {
-    trigger("debug", data: ["msg": msg])
+  /// Retire a player without ever blocking the UI thread.
+  ///
+  /// The freeze on back / episode-change was a timing collision:
+  /// VLCMediaPlayer.stop() does a synchronous hop to the main thread, and when
+  /// it landed right as the webview was doing the heavy post-exit render, the
+  /// two blocked each other. (A diagnostic build that added tiny synchronous
+  /// delays between the exit steps accidentally avoided it — proof it is
+  /// timing.) So: halt decode immediately with pause() (cheap, no vout work),
+  /// detach the video output, hide the view — the UI is fully restored right
+  /// now — and defer the actual stop() until the main thread is idle again.
+  /// The escaping closure keeps the player alive until stop() runs, so ARC
+  /// never deallocs it on the main thread either.
+  private func retire(_ p: VLCMediaPlayer?, _ v: UIView?) {
+    guard let p = p else {
+      v?.removeFromSuperview()
+      return
+    }
+    p.delegate = nil
+    p.pause()
+    p.drawable = nil
+    v?.isHidden = true
+    DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) {
+      p.media = nil
+      p.stop()
+      DispatchQueue.main.async { v?.removeFromSuperview() }
+    }
   }
 
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
     let stoppingPlayer = player
     let stoppingView = videoView
-    stoppingPlayer?.delegate = nil
     player = nil
     videoView = nil
     if let webview = self.webview {
@@ -82,24 +105,7 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       webview.backgroundColor = .black
       webview.scrollView.backgroundColor = .black
     }
-    stoppingView?.isHidden = true
-    // THE fix for the back-button freeze: detach the video output NOW, on the
-    // main thread. VLCMediaPlayer.stop() otherwise dispatch_syncs to the main
-    // thread to tear the vout down; with no new player taking the vout over
-    // (unlike next-episode) that teardown froze the app *after* the JS exit had
-    // already completed. Nil-ing the drawable releases the vout cleanly here so
-    // the background stop() has nothing left to synchronise.
-    stoppingPlayer?.drawable = nil
-    guard let stoppingPlayer = stoppingPlayer else {
-      stoppingView?.removeFromSuperview()
-      return
-    }
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      self?.debug("native stop() begin")
-      stoppingPlayer.stop()
-      self?.debug("native stop() end")
-      DispatchQueue.main.async { stoppingView?.removeFromSuperview() }
-    }
+    retire(stoppingPlayer, stoppingView)
   }
 
   private func statusString(_ state: VLCMediaPlayerState) -> String {
@@ -245,34 +251,11 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       UIApplication.shared.isIdleTimerDisabled = true
       invoke.resolve()
 
-      // Start the new player (guarded so the stop-completion and the timeout
-      // can't double-fire it). The old VIEW is never removed here: pulling a
-      // still-playing player's drawable out of the hierarchy hangs the app, so
-      // it is only removed inside the stop completion, after the old player is
-      // actually dead. Until then the old view sits hidden behind the new one.
-      var started = false
-      let startNew: () -> Void = {
-        if started { return }
-        started = true
-        if self.player === newPlayer { newPlayer.play() }
-      }
-
-      if let oldPlayer = oldPlayer {
-        oldView?.isHidden = true
-        // Detach the old vout on main before stopping (see teardown()).
-        oldPlayer.drawable = nil
-        DispatchQueue.global(qos: .userInitiated).async {
-          oldPlayer.stop()
-          DispatchQueue.main.async {
-            startNew()
-            oldView?.removeFromSuperview()
-          }
-        }
-        // Don't wait forever if the old stream's stop() stalls on the network.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: startNew)
-      } else {
-        newPlayer.play()
-      }
+      // The new player has its own fresh view and video output, so it can start
+      // right away; the old one is retired (paused now, stopped later off-main)
+      // exactly like on exit, so its stop() never collides with the UI thread.
+      retire(oldPlayer, oldView)
+      newPlayer.play()
     }
   }
 
