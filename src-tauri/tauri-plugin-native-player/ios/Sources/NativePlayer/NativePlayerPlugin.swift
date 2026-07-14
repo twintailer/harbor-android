@@ -48,6 +48,8 @@ class NativePlayerPlugin: Plugin {
   private var startApplied = true
   private var lastTracksSignature = ""
   private var ended = false
+  private var lastLoadUrl = ""
+  private var lastLoadAt: TimeInterval = 0
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
@@ -257,6 +259,19 @@ class NativePlayerPlugin: Plugin {
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { invoke.resolve(); return }
       self.debug("load: begin")
+      // De-dupe racing loads for the same URL. React can mount the player
+      // twice (StrictMode / a fast remount), firing two `loadfile replace` in
+      // the same instant; two concurrent VkSurface re-inits on one Metal layer
+      // can wedge the GPU. The first load wins; the duplicate is a no-op.
+      let now = Date().timeIntervalSince1970
+      if args.url == self.lastLoadUrl, now - self.lastLoadAt < 1.5 {
+        self.debug("load: dup ignored")
+        self.setProp("pause", flag: false)
+        invoke.resolve()
+        return
+      }
+      self.lastLoadUrl = args.url
+      self.lastLoadAt = now
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
       self.ensureMpv()
@@ -393,6 +408,10 @@ class NativePlayerPlugin: Plugin {
 
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
+    // mpv is about to be destroyed, so the next load must always go through —
+    // clear the de-dupe key or a re-open of the same URL would be skipped.
+    lastLoadUrl = ""
+    lastLoadAt = 0
     pollTimer?.invalidate()
     pollTimer = nil
     let view = videoView
@@ -403,16 +422,29 @@ class NativePlayerPlugin: Plugin {
       webview.backgroundColor = .black
       webview.scrollView.backgroundColor = .black
     }
+    // Detach the video view NOW so the webview UI is visible immediately, but
+    // do NOT let it deallocate yet: mpv was handed a *raw* pointer to the
+    // CAMetalLayer (via `wid`, passUnretained), and its render/vo thread keeps
+    // touching that layer while it shuts down. Freeing the layer here would be
+    // a use-after-free on mpv's background thread — a crash/hang that looked
+    // exactly like the "freeze".
     view?.removeFromSuperview()
     // mpv_terminate_destroy blocks until the whole player has shut down — which
     // includes draining decode/network threads, so on a stalled stream it can
     // hang for seconds. Never run it on the main thread (that was the freeze).
-    // Nil the handle so nothing else touches it, then destroy off-main; the UI
-    // is already fully restored above.
+    // Nil the handle so nothing else touches it, then destroy off-main.
     if let ctx = mpv {
       mpv = nil
+      // Retain the view (and thus its MetalVideoLayer sublayer) until mpv is
+      // fully torn down, so the `wid` pointer stays valid for the whole drain.
+      let keepAlive = view
       DispatchQueue.global(qos: .userInitiated).async {
         mpv_terminate_destroy(ctx)
+        // mpv is gone; the layer is now safe to release. Do it on the main
+        // thread — UIView deallocation must happen there.
+        DispatchQueue.main.async {
+          _ = keepAlive
+        }
       }
     }
   }
