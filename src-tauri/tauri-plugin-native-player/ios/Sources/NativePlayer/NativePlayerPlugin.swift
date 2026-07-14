@@ -386,21 +386,14 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   }
 
   @objc public func unlockOrientation(_ invoke: Invoke) {
-    // Resolve first, then rotate back to portrait on a later runloop turn so it
-    // never runs in the same pass React is tearing the player UI down. (The
-    // rotation was ruled out as the freeze cause; the vout teardown was.)
+    // Do NOT force portrait here. Forcing requestGeometryUpdate(.portrait) in
+    // the same window that React tears the player UI down froze the app (a
+    // second, separate cause from the vout teardown). The app already supports
+    // all orientations (Info.plist), so once the forced landscape is released
+    // the system follows the physical device orientation on its own — hold the
+    // phone upright and it returns to portrait. No programmatic rotation, no
+    // freeze.
     invoke.resolve()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-      if #available(iOS 16.0, *) {
-        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-        self?.webview?.window?.rootViewController?
-          .setNeedsUpdateOfSupportedInterfaceOrientations()
-      } else {
-        UIDevice.current.setValue(
-          UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
-      }
-    }
   }
 }
 
