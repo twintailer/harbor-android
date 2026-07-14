@@ -23,14 +23,9 @@ fn main() {
         .ios_path("ios")
         .build();
 
-    // The Swift plugin calls libmpv, but linking libmpv + its ~20 dependency
-    // xcframeworks (ffmpeg, libplacebo, MoltenVK, …) at the cargo cdylib stage
-    // is brittle. Instead leave the mpv symbols undefined in the cdylib and let
-    // them bind at load time from the frameworks the app bundle embeds (the CI
-    // Xcode-project patch links + embeds every MPVKit xcframework). This is the
-    // standard approach for iOS plugin dylibs.
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os == "ios" {
-        println!("cargo:rustc-link-arg=-Wl,-undefined,dynamic_lookup");
-    }
+    // libmpv is linked into the app by Xcode (MPVKit SwiftPM package), not by
+    // cargo. Its symbols stay undefined in the cdylib and bind at load time via
+    // `-Wl,-undefined,dynamic_lookup` — but that link-arg is emitted from the
+    // FINAL cdylib crate (src-tauri/build.rs), because a dependency build
+    // script's rustc-link-arg does not propagate to the final link.
 }

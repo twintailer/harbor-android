@@ -93,6 +93,15 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
     }
 
+    // The native-player plugin calls libmpv, which is linked into the app by
+    // Xcode (MPVKit SwiftPM package), not by cargo. Leave those symbols
+    // undefined in the cdylib and bind them at load time. This link-arg must be
+    // emitted from the FINAL (cdylib) crate's build script — a dependency's
+    // `rustc-link-arg` does not propagate to the final link.
+    if target_os == "ios" {
+        println!("cargo:rustc-link-arg=-Wl,-undefined,dynamic_lookup");
+    }
+
     let _ = manifest;
     tauri_build::build()
 }
