@@ -66,17 +66,12 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
   // MARK: helpers
 
+  private func debug(_ msg: String) {
+    trigger("debug", data: ["msg": msg])
+  }
+
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
-    // CRITICAL: never call removeFromSuperview() on a still-playing player's
-    // drawable. Tearing the view out from under a live VLC video output
-    // synchronises with the vout on the main thread and hangs the app — this
-    // was the back-button freeze. Instead make the webview opaque and hide the
-    // video view immediately (so the web UI is visible and responsive at once),
-    // stop the player off the main thread, and only remove the now-dead view
-    // afterwards. stop() runs on a plain concurrent global queue: never main
-    // (on-main stop deadlocks on the vout teardown) and never a shared serial
-    // queue (a stalled network stop() would block later teardowns).
     let stoppingPlayer = player
     let stoppingView = videoView
     stoppingPlayer?.delegate = nil
@@ -88,14 +83,21 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
       webview.scrollView.backgroundColor = .black
     }
     stoppingView?.isHidden = true
-    // Orientation is reset separately by the JS unmount (unlock_orientation);
-    // doing it here in the same pass as the React teardown raced the relayout.
+    // THE fix for the back-button freeze: detach the video output NOW, on the
+    // main thread. VLCMediaPlayer.stop() otherwise dispatch_syncs to the main
+    // thread to tear the vout down; with no new player taking the vout over
+    // (unlike next-episode) that teardown froze the app *after* the JS exit had
+    // already completed. Nil-ing the drawable releases the vout cleanly here so
+    // the background stop() has nothing left to synchronise.
+    stoppingPlayer?.drawable = nil
     guard let stoppingPlayer = stoppingPlayer else {
       stoppingView?.removeFromSuperview()
       return
     }
-    DispatchQueue.global(qos: .userInitiated).async {
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      self?.debug("native stop() begin")
       stoppingPlayer.stop()
+      self?.debug("native stop() end")
       DispatchQueue.main.async { stoppingView?.removeFromSuperview() }
     }
   }
@@ -257,6 +259,8 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
 
       if let oldPlayer = oldPlayer {
         oldView?.isHidden = true
+        // Detach the old vout on main before stopping (see teardown()).
+        oldPlayer.drawable = nil
         DispatchQueue.global(qos: .userInitiated).async {
           oldPlayer.stop()
           DispatchQueue.main.async {

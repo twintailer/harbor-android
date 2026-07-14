@@ -71,7 +71,11 @@ export function createNativeBridge(): PlayerBridge {
       console.warn(`[native-player] ${cmd} failed`, e);
     });
 
+  let debugL: PluginListener | null = null;
   void (async () => {
+    debugL = await addPluginListener("native-player", "debug", (e: { msg?: string }) => {
+      mlog(`native: ${e.msg ?? "?"}`);
+    });
     statusL = await addPluginListener("native-player", "status", (e: StatusEvent) => {
       if (destroyed) return;
       const status =
@@ -207,6 +211,9 @@ export function createNativeBridge(): PlayerBridge {
         .catch((e) => mlog(`native.destroy: stop rejected ${e}`));
       void statusL?.unregister();
       void timeL?.unregister();
+      // Keep the debug listener alive briefly so the native stop()'s
+      // begin/end events (fired after teardown) still reach the log.
+      setTimeout(() => void debugL?.unregister(), 3000);
       listeners.clear();
       mlog("native.destroy: done");
     },
