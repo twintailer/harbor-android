@@ -80,6 +80,7 @@ export function usePlayerBridge(params: {
     let off: (() => void) | null = null;
     let bridge: PlayerBridge | null = null;
     setBridgeReady(false);
+    mlog(`bridge: creating ${chosenEngine}`);
     (async () => {
       const want = chosenEngine;
       const getEmbedRect = async () => {
@@ -114,6 +115,7 @@ export function usePlayerBridge(params: {
       bridge.attach(host);
       bridgeRef.current = bridge;
       setEngine(chosen);
+      mlog(`bridge: attached ${chosen}`);
       off = bridge.subscribe((s) => {
         setPlaybackClock(s.positionSec, s.bufferedSec);
         if (snapChangedIgnoringClock(prevSnapRef.current, s)) {

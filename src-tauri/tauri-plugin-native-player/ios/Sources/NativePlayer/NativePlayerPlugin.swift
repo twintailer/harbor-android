@@ -141,15 +141,29 @@ class NativePlayerPlugin: Plugin {
     setOpt("cache", "yes")
     setOpt("demuxer-max-bytes", "64MiB")
     setOpt("network-timeout", "30")
+    // The instance is reused for the app's lifetime. idle=yes is REQUIRED so
+    // the core keeps running after the `stop` command (which clears the
+    // playlist) instead of shutting down — otherwise the reused handle would be
+    // dead on the next open. A re-open is then just another `loadfile replace`.
+    setOpt("idle", "yes")
     mpv_initialize(ctx)
+  }
 
-    // Drain and emit state on a timer (simpler and robust vs. the event loop).
+  // The poll timer only needs to run while a file is playing. Running it on the
+  // home/detail screens would do a CATransaction/layoutMetal every 0.25s on the
+  // main thread for nothing, competing with React's rendering.
+  private func startPolling() {
+    guard pollTimer == nil else { return }
     let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
       self?.tick()
     }
     RunLoop.main.add(timer, forMode: .common)
     pollTimer = timer
-    UIApplication.shared.isIdleTimerDisabled = true
+  }
+
+  private func stopPolling() {
+    pollTimer?.invalidate()
+    pollTimer = nil
   }
 
   private func setOpt(_ name: String, _ value: String) {
@@ -278,6 +292,7 @@ class NativePlayerPlugin: Plugin {
       // The instance is reused across opens, so a prior halt may have hidden
       // the video view and made the webview opaque — bring it back.
       self.showVideo()
+      self.startPolling()
       UIApplication.shared.isIdleTimerDisabled = true
       self.debug("load: mpv ready")
       self.pendingStartAt = args.startAtSec ?? 0
@@ -425,6 +440,7 @@ class NativePlayerPlugin: Plugin {
     UIApplication.shared.isIdleTimerDisabled = false
     lastLoadUrl = ""
     lastLoadAt = 0
+    stopPolling()
     // Unload the current file only: frees this stream's demuxer/decoder/network
     // without tearing down the core, the render context or the layer. Non-
     // blocking (queued to mpv's core), so exit stays instant.

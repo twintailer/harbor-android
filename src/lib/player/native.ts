@@ -119,9 +119,11 @@ export function createNativeBridge(): PlayerBridge {
     async load(src: PlayerSource) {
       ended = false;
       patch({ ...emptySnapshot, status: "loading" });
+      mlog("native.load: invoking");
       await invoke(`${PLUGIN}load`, {
         args: { url: src.url, startAtSec: src.startAtSec ?? 0 },
       });
+      mlog("native.load: invoked");
       if (src.subtitles && src.subtitles.length > 0) {
         void call("add_subtitle", { args: { url: src.subtitles[0].url, select: false } });
       }
