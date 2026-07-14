@@ -241,6 +241,13 @@ class NativePlayerPlugin: Plugin {
 
   // MARK: - commands
 
+  // Diagnostic breadcrumb, surfaced on the JS side's persisted exit log.
+  private func debug(_ msg: String) {
+    var data: JSObject = [:]
+    data["msg"] = msg
+    trigger("debug", data: data)
+  }
+
   @objc public func probe(_ invoke: Invoke) {
     invoke.resolve(ProbeResponse(available: true))
   }
@@ -249,9 +256,11 @@ class NativePlayerPlugin: Plugin {
     let args = try invoke.parseArgs(LoadArgs.self)
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { invoke.resolve(); return }
+      self.debug("load: begin")
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
       self.ensureMpv()
+      self.debug("load: mpv ready")
       self.pendingStartAt = args.startAtSec ?? 0
       self.startApplied = self.pendingStartAt <= 0
       self.lastTracksSignature = ""
@@ -259,6 +268,7 @@ class NativePlayerPlugin: Plugin {
       // `replace` swaps media in-place — no teardown, so next/prev episode is
       // just another loadfile with nothing to free.
       self.command(["loadfile", args.url, "replace"])
+      self.debug("load: loadfile sent")
       self.setProp("pause", flag: false)
       invoke.resolve()
     }
@@ -280,7 +290,9 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func stop(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
+      self?.debug("stop: teardown begin")
       self?.teardown()
+      self?.debug("stop: teardown end")
       invoke.resolve()
     }
   }
@@ -392,12 +404,16 @@ class NativePlayerPlugin: Plugin {
       webview.scrollView.backgroundColor = .black
     }
     view?.removeFromSuperview()
-    // mpv_terminate_destroy is safe on the main thread and does not block on a
-    // video-output sync (unlike VLCKit's stop) — this is the whole reason for
-    // moving to mpv. Nil the handle first so nothing else touches it.
+    // mpv_terminate_destroy blocks until the whole player has shut down — which
+    // includes draining decode/network threads, so on a stalled stream it can
+    // hang for seconds. Never run it on the main thread (that was the freeze).
+    // Nil the handle so nothing else touches it, then destroy off-main; the UI
+    // is already fully restored above.
     if let ctx = mpv {
       mpv = nil
-      mpv_terminate_destroy(ctx)
+      DispatchQueue.global(qos: .userInitiated).async {
+        mpv_terminate_destroy(ctx)
+      }
     }
   }
 
