@@ -16,35 +16,35 @@ let package = Package(
         .package(name: "Tauri", path: "../.tauri/tauri-api")
     ],
     targets: [
-        // Interop declarations only; MobileVLCKit.xcframework is linked by the
-        // app's Xcode project (SwiftPM CLI builds cannot use binary targets).
+        // Vendored mpv client API. The actual libmpv (+ ffmpeg, libplacebo,
+        // MoltenVK, …) xcframeworks are linked by the app's Xcode project in CI;
+        // the SwiftPM CLI build only needs the header to compile against.
         .target(
-            name: "CVLC",
-            path: "Sources/CVLC",
+            name: "Cmpv",
+            path: "Sources/Cmpv",
             publicHeadersPath: "include"),
         .target(
             name: "tauri-plugin-native-player",
             dependencies: [
                 .byName(name: "Tauri"),
-                "CVLC",
+                "Cmpv",
             ],
             path: "Sources/NativePlayer",
             linkerSettings: [
-                .linkedFramework("QuartzCore"),
-                .linkedFramework("CoreText"),
                 .linkedFramework("AVFoundation"),
-                .linkedFramework("Security"),
-                .linkedFramework("CFNetwork"),
                 .linkedFramework("AudioToolbox"),
-                .linkedFramework("OpenGLES"),
-                .linkedFramework("CoreGraphics"),
-                .linkedFramework("VideoToolbox"),
+                .linkedFramework("CoreAudio"),
                 .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo"),
+                .linkedFramework("Metal"),
+                .linkedFramework("VideoToolbox"),
                 .linkedLibrary("c++"),
+                .linkedLibrary("bz2"),
+                .linkedLibrary("expat"),
+                .linkedLibrary("iconv"),
+                .linkedLibrary("resolv"),
                 .linkedLibrary("xml2"),
                 .linkedLibrary("z"),
-                .linkedLibrary("bz2"),
-                .linkedLibrary("iconv"),
             ]),
     ]
 )

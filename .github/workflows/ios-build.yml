@@ -40,43 +40,29 @@ jobs:
       - name: Initialize iOS project
         run: pnpm tauri ios init --ci
 
-      # MobileVLCKit powers the native-player plugin. SwiftPM's CLI build
-      # (used by swift-rs during cargo build) cannot consume binary
-      # xcframework targets, so the plugin only compiles against interop
-      # declarations. Extract the device slice to a fixed path: the plugin's
-      # build.rs links it during cargo build, and the Xcode project links it
-      # for the final app (project.yml patch + regenerate).
-      - name: Add MobileVLCKit framework
+      # libmpv (MPVKit) powers the native-player plugin. swift-rs' CLI build
+      # cannot consume binary SwiftPM targets, so the plugin compiles against a
+      # vendored mpv/client.h and the mpv symbols bind at load time (build.rs
+      # uses -undefined dynamic_lookup). The real libmpv + all its dependencies
+      # (ffmpeg, libplacebo, MoltenVK, libass, …) are pulled in as a normal
+      # SwiftPM package on the APP target, which Xcode resolves — that is the
+      # only sane way to assemble MPVKit's ~two dozen binary xcframeworks.
+      - name: Add MPVKit Swift package to the app
         run: |
-          curl -L -o vlckit.zip "https://github.com/tylerjonesio/vlckit-spm/releases/download/3.6.0/VLCKit-all.xcframework.zip"
-          echo "5da4747e001900bbb4153f58db2be4695096c9c2350aea00376ad67b39c053f6  vlckit.zip" | shasum -a 256 -c -
-          unzip -q vlckit.zip -d vlckit-tmp
-          SLICE=$(find vlckit-tmp -type d -name 'MobileVLCKit.framework' -path '*ios-arm64*' ! -path '*simulator*' | head -1)
-          echo "Device slice: $SLICE"
-          test -n "$SLICE"
-          mkdir -p src-tauri/frameworks-ios
-          cp -R "$SLICE" src-tauri/frameworks-ios/
-          rm -rf vlckit-tmp vlckit.zip
           ruby -ryaml -e '
             path = "src-tauri/gen/apple/project.yml"
             y = YAML.load_file(path)
+            (y["packages"] ||= {})["MPVKit"] =
+              { "url" => "https://github.com/mpvkit/MPVKit", "exactVersion" => "0.41.0" }
             name, target = y["targets"].find { |k, _| k.end_with?("_iOS") }
             raise "no iOS target found" unless target
-            target["dependencies"] ||= []
-            # MobileVLCKit is a dynamic framework: link AND embed it, or the
-            # app aborts at launch with dyld "Library not loaded".
-            target["dependencies"] << { "framework" => "../../frameworks-ios/MobileVLCKit.framework", "embed" => true, "codeSign" => false }
+            deps = (target["dependencies"] ||= [])
+            deps << { "package" => "MPVKit", "product" => "MPVKit" }
             settings = (target["settings"] ||= {})
             base = (settings["base"] ||= {})
             base["LD_RUNPATH_SEARCH_PATHS"] = "$(inherited) @executable_path/Frameworks"
-            flags = base["OTHER_LDFLAGS"] || "$(inherited)"
-            base["OTHER_LDFLAGS"] = flags + " -lc++ -lxml2 -lz -lbz2 -liconv" \
-              " -framework QuartzCore -framework CoreText -framework AVFoundation" \
-              " -framework Security -framework CFNetwork -framework AudioToolbox" \
-              " -framework OpenGLES -framework CoreGraphics -framework VideoToolbox" \
-              " -framework CoreMedia"
             File.write(path, y.to_yaml)
-            puts "patched target #{name}"
+            puts "added MPVKit package to #{name}"
           '
           brew install xcodegen
           (cd src-tauri/gen/apple && xcodegen generate)
