@@ -44,3 +44,6 @@ local_docs/
 
 *.ipa
 /harbor-0.9.21/
+
+# Competitor reference source, not part of Harbor
+/Nuvio/
