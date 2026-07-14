@@ -71,13 +71,18 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
   /// The freeze on back / episode-change was a timing collision:
   /// VLCMediaPlayer.stop() does a synchronous hop to the main thread, and when
   /// it landed right as the webview was doing the heavy post-exit render, the
-  /// two blocked each other. (A diagnostic build that added tiny synchronous
-  /// delays between the exit steps accidentally avoided it — proof it is
-  /// timing.) So: halt decode immediately with pause() (cheap, no vout work),
-  /// detach the video output, hide the view — the UI is fully restored right
-  /// now — and defer the actual stop() until the main thread is idle again.
-  /// The escaping closure keeps the player alive until stop() runs, so ARC
-  /// never deallocs it on the main thread either.
+  /// two blocked each other. Deferring stop() alone did NOT fix it, which
+  /// proved the blocker was `drawable = nil` running on the main thread: like
+  /// stop(), it synchronously tears down the VLC video output. (mpv-based
+  /// players such as Nuvio never hit this — mpv_terminate_destroy is clean.)
+  ///
+  /// So EVERY video-output operation is moved off the main thread. On main we
+  /// only do the instant, safe bits: drop the delegate, pause decode, and hide
+  /// the view — the UI is fully restored right now. The whole vout teardown
+  /// (drawable detach, media release, stop) happens on a background thread a
+  /// beat later, when the main thread is idle, so its internal main-thread sync
+  /// (if any) completes immediately instead of colliding with the exit render.
+  /// The escaping closure keeps the player alive until then.
   private func retire(_ p: VLCMediaPlayer?, _ v: UIView?) {
     guard let p = p else {
       v?.removeFromSuperview()
@@ -85,9 +90,9 @@ class NativePlayerPlugin: Plugin, VLCMediaPlayerDelegate {
     }
     p.delegate = nil
     p.pause()
-    p.drawable = nil
     v?.isHidden = true
-    DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) {
+    DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) {
+      p.drawable = nil
       p.media = nil
       p.stop()
       DispatchQueue.main.async { v?.removeFromSuperview() }
