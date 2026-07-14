@@ -275,6 +275,10 @@ class NativePlayerPlugin: Plugin {
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
       self.ensureMpv()
+      // The instance is reused across opens, so a prior halt may have hidden
+      // the video view and made the webview opaque — bring it back.
+      self.showVideo()
+      UIApplication.shared.isIdleTimerDisabled = true
       self.debug("load: mpv ready")
       self.pendingStartAt = args.startAtSec ?? 0
       self.startApplied = self.pendingStartAt <= 0
@@ -305,9 +309,9 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func stop(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
-      self?.debug("stop: teardown begin")
-      self?.teardown()
-      self?.debug("stop: teardown end")
+      self?.debug("stop: halt begin")
+      self?.haltPlayback()
+      self?.debug("stop: halt end")
       invoke.resolve()
     }
   }
@@ -404,8 +408,53 @@ class NativePlayerPlugin: Plugin {
     }
   }
 
-  // MARK: - teardown
+  // MARK: - halt (normal exit) vs. teardown (app shutdown)
 
+  // The normal player-exit path. It does NOT destroy mpv, its Metal layer or
+  // the poll timer — those are created once and reused for the app's lifetime.
+  //
+  // Creating/destroying mpv on every open/close was the whole freeze saga:
+  // mpv_terminate_destroy drains decode/network threads (up to network-timeout
+  // seconds) and its render thread keeps touching the CAMetalLayer. Destroying
+  // it while the next player spun up meant two MoltenVK/Vulkan contexts fought
+  // over the GPU, which wedged the main thread (CATransaction/drawable) so the
+  // very next `stop` never even ran — exactly what the exit log showed
+  // (…"bridge cleanup: done" then nothing). Reusing one instance makes exit
+  // instant and destroys nothing; the next open is just another loadfile.
+  private func haltPlayback() {
+    UIApplication.shared.isIdleTimerDisabled = false
+    lastLoadUrl = ""
+    lastLoadAt = 0
+    // Unload the current file only: frees this stream's demuxer/decoder/network
+    // without tearing down the core, the render context or the layer. Non-
+    // blocking (queued to mpv's core), so exit stays instant.
+    command(["stop"])
+    hideVideo()
+  }
+
+  // Reveal the native video surface behind the (transparent) webview.
+  private func showVideo() {
+    videoView?.isHidden = false
+    guard let webview = self.webview else { return }
+    webview.isOpaque = false
+    webview.backgroundColor = .clear
+    webview.scrollView.backgroundColor = .clear
+    layoutMetal()
+  }
+
+  // Hide the native video surface and paint the webview opaque black.
+  private func hideVideo() {
+    videoView?.isHidden = true
+    guard let webview = self.webview else { return }
+    webview.isOpaque = true
+    webview.backgroundColor = .black
+    webview.scrollView.backgroundColor = .black
+  }
+
+  // Full teardown of mpv. NOT used on the normal exit path (see haltPlayback);
+  // kept for a real shutdown/memory-pressure hook. Runs the blocking
+  // mpv_terminate_destroy off the main thread and keeps the layer alive until
+  // it finishes so mpv's render thread can't touch a freed CAMetalLayer.
   private func teardown() {
     UIApplication.shared.isIdleTimerDisabled = false
     // mpv is about to be destroyed, so the next load must always go through —
