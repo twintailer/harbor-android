@@ -9,15 +9,22 @@ import WebKit
 // desktop). mpv renders into a CAMetalLayer that sits behind the transparent
 // webview.
 //
-// HARD-WON RULE: never tear down (or reconfigure away) mpv's video output on
-// the user-visible path. One mpv instance is created on first play and reused
-// for the app's lifetime; media changes are `loadfile … replace`, exit is just
-// `pause` + hiding the video view. Anything that destroys the Vulkan/MoltenVK
-// swapchain on the CAMetalLayer (mpv `stop`, mpv_terminate_destroy, VLCKit's
-// vout teardown before that) races main-thread CoreAnimation work (the
-// rotate-back-to-portrait + React re-render right after exit) and deadlocks
-// the main thread — every single "freeze" in this app's history was a variant
-// of that collision.
+// HARD-WON RULES — every "freeze" in this app's history was a violation of
+// one of these:
+// 1. Never tear down (or reconfigure away) mpv's video output on the
+//    user-visible path. One mpv instance is created on first play and reused
+//    for the app's lifetime; media changes are `loadfile … replace`, exit is
+//    just `pause` + occluding the surface. Anything that destroys the
+//    Vulkan/MoltenVK swapchain (mpv `stop`, mpv_terminate_destroy, VLCKit's
+//    vout teardown before that) races main-thread CoreAnimation work and
+//    deadlocks.
+// 2. Never hide the CAMetalLayer (isHidden / removeFromSuperview) while mpv
+//    is alive — iOS stops handing drawables to offscreen layers and mpv's
+//    render thread starves, wedging the core. Occlude with webview opacity.
+// 3. Never resize the layer of a live swapchain while the surface is
+//    occluded — the exit rotation would make MoltenVK rebuild the swapchain
+//    from the render thread while the main thread holds its own rotation
+//    CATransaction on the same (not thread-safe) layer.
 
 struct LoadArgs: Decodable {
   let url: String
@@ -137,6 +144,15 @@ class NativePlayerPlugin: Plugin {
 
   private func layoutMetal() {
     guard let view = videoView, let layer = metalLayer else { return }
+    // NEVER touch the layer while the surface is occluded. The exit rotation
+    // (landscape → portrait) is the only rotation that ever hits a LIVE mpv
+    // swapchain (playback locks the orientation), and resizing drawableSize
+    // here makes MoltenVK rebuild the swapchain from mpv's render thread
+    // while the main thread is mid-rotation inside its own CATransaction on
+    // the same layer — CALayer is not thread-safe, and that collision was the
+    // exit freeze. While occluded the geometry doesn't matter; showVideo()
+    // re-runs this once the surface is visible again.
+    guard !surfaceHidden else { return }
     let bounds = view.bounds
     guard bounds.width > 1, bounds.height > 1 else { return }
     let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale

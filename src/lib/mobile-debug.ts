@@ -14,7 +14,6 @@ import { isMobileTauri } from "./platform";
 
 const KEY = "harbor.exitLog";
 const LINES: string[] = [];
-let el: HTMLDivElement | null = null;
 let enabled: boolean | null = null;
 
 // On mobile Tauri the diagnostics default ON (explicit "0" disables); elsewhere
@@ -32,22 +31,6 @@ function isEnabled(): boolean {
   return enabled;
 }
 
-function render(): void {
-  if (typeof document === "undefined" || !document.body) return;
-  if (!el) {
-    el = document.createElement("div");
-    el.setAttribute("data-harbor-debug", "1");
-    el.style.cssText =
-      "position:fixed;top:0;left:0;right:0;z-index:2147483647;" +
-      "background:rgba(0,0,0,0.82);color:#39ff5a;" +
-      "font:10px/1.35 ui-monospace,Menlo,monospace;padding:4px 6px;" +
-      "pointer-events:none;white-space:pre-wrap;max-height:46vh;overflow:hidden;" +
-      "-webkit-user-select:none;user-select:none";
-    document.body.appendChild(el);
-  }
-  el.textContent = LINES.join("\n");
-}
-
 /** Reset the buffer so the next sequence is isolated (call on back tap). */
 export function mclear(): void {
   if (!isEnabled()) return;
@@ -59,19 +42,21 @@ export function mclear(): void {
   }
 }
 
-/** Append a diagnostic line: paints an overlay AND persists synchronously. */
+/**
+ * Append a diagnostic line, persisted synchronously (setItem survives even if
+ * the app freezes a millisecond later). No live overlay — it covered the
+ * player's back button; the log is only surfaced on the NEXT launch.
+ */
 export function mlog(msg: string): void {
   if (!isEnabled()) return;
   const t = typeof performance !== "undefined" ? performance.now() / 1000 : 0;
   LINES.push(`${t.toFixed(2)}  ${msg}`);
   if (LINES.length > 24) LINES.shift();
-  // Persist first — this is what survives a freeze/force-quit.
   try {
     localStorage.setItem(KEY, LINES.join("\n"));
   } catch {
     /* ignore */
   }
-  render();
 }
 
 /**
