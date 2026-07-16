@@ -139,6 +139,19 @@ jobs:
           echo "APP=$PWD/$APP" >> "$GITHUB_ENV"
           ls -la "$APP"
 
+      - name: Prepare test media (served from the runner)
+        run: |
+          # The googleapis sample bucket 403s GitHub runners; Blender's own
+          # server has hosted these files for 15+ years. Serve locally so the
+          # sim (which shares the host loopback) streams with zero flakiness.
+          mkdir -p testmedia
+          curl -fL --retry 3 -o testmedia/test.mp4 \
+            https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4
+          ls -la testmedia
+          nohup python3 -m http.server 8880 --directory testmedia > media_server.log 2>&1 &
+          sleep 1
+          curl -sI http://127.0.0.1:8880/test.mp4 | head -3
+
       - name: Install and launch with native autotest
         run: |
           UDID=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [^(]*\(([0-9A-F-]+)\)' | grep -oE '[0-9A-F-]{36}')
@@ -147,7 +160,7 @@ jobs:
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" "$APP"
-          SIMCTL_CHILD_HARBOR_NATIVE_AUTOTEST="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" \
+          SIMCTL_CHILD_HARBOR_NATIVE_AUTOTEST="http://127.0.0.1:8880/test.mp4" \
             xcrun simctl launch "$UDID" app.harbor
           echo "app launched"
 
