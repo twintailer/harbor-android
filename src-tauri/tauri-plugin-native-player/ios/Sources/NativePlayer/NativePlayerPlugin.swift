@@ -69,6 +69,9 @@ class NativePlayerPlugin: Plugin {
   // True between a halt (player closed, webview opaque) and the reveal of the
   // next file. Purely bookkeeping — the video view itself stays visible.
   private var surfaceHidden = false
+  // Bumped on every halt AND every load: deferred halt work (pause/occlude)
+  // no-ops when a reopen supersedes it.
+  private var haltGen = 0
 
   // What the app-delegate hook reports as supported orientations. Portrait by
   // default (phone UI); the player flips it to landscape while a video is
@@ -169,8 +172,10 @@ class NativePlayerPlugin: Plugin {
       NativePlayerPlugin.orientationMask = .landscape
       self.applyLandscape()
       self.startPolling()
+      self.haltGen += 1
       self.command(["loadfile", url, "replace"])
       self.setProp("pause", flag: false)
+      self.setProp("mute", flag: false)
     }
     main.asyncAfter(deadline: .now() + 30.0) { [weak self] in
       NativePlayerPlugin.probe("autotest: halt 2 (from playing)")
@@ -537,6 +542,8 @@ class NativePlayerPlugin: Plugin {
       // MPV_EVENT_FILE_LOADED — showing it here would flash the previous
       // video's last frame while this one is still opening.
       self.startPolling()
+      // Cancel any deferred halt work (pause/occlude) from a previous exit.
+      self.haltGen += 1
       UIApplication.shared.isIdleTimerDisabled = true
       self.debug("load: mpv ready")
       self.pendingStartAt = args.startAtSec ?? 0
@@ -548,6 +555,8 @@ class NativePlayerPlugin: Plugin {
       self.command(["loadfile", args.url, "replace"])
       self.debug("load: loadfile sent")
       self.setProp("pause", flag: false)
+      // Undo the halt's mute; the JS side re-applies its own audio state.
+      self.setProp("mute", flag: false)
       invoke.resolve()
     }
   }
@@ -707,27 +716,29 @@ class NativePlayerPlugin: Plugin {
     lastLoadUrl = ""
     lastLoadAt = 0
     stopPolling()
-    // PAUSE, do not `stop`. The stop command unloads the file, and with no
-    // file loaded mpv destroys its video output — an async Vulkan-swapchain
-    // teardown on our CAMetalLayer that lands right in the middle of the
-    // rotate-to-portrait + home-screen render storm (both exit logs froze
-    // 10–100ms after this point). Pausing touches nothing: core, VO,
-    // swapchain and layer all stay exactly as they are. The demuxer idles
-    // once its cache is full; the next open replaces the file via
-    // `loadfile … replace` — the episode-change path that never froze.
-    setProp("pause", flag: true)
+    haltGen += 1
+    let gen = haltGen
+    // NEVER `stop` (unloading destroys the video output — swapchain teardown,
+    // rule 1) and do NOTHING in this turn that touches video or CoreAnimation.
+    // Exits from PAUSED already survive; exits from PLAYING still froze, and
+    // the one remaining state change in this turn was `pause` itself — which
+    // makes gpu-next repaint a frame right as WebKit commits the player
+    // unmount. So the immediate halt is audio-only: MUTE (no repaint), and
+    // the video keeps playing invisibly for a beat.
+    setProp("mute", flag: true)
     surfaceHidden = true
-    // Do NOT commit any CoreAnimation change in this runloop turn. The native
-    // probe showed the main thread completing this block and then never
-    // running another queued item — the signature of the end-of-turn
-    // CATransaction commit deadlocking. gpu-next repaints one frame when
-    // pause flips; committing our webview opacity change at that exact moment
-    // pits the CA commit (main) against the drawable present (render thread)
-    // on the same layer tree. Defer the flip until mpv is provably idle. The
-    // home screen's DOM has a solid background (data-native-video was already
-    // removed), so nothing shows through in the meantime.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-      guard let self = self, self.surfaceHidden else { return }
+    // Pause in a QUIET turn once the exit render storm has passed. The
+    // generation guard makes this a no-op if the player was reopened.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+      guard let self = self, self.haltGen == gen else { return }
+      NativePlayerPlugin.probe("halt: deferred pause")
+      self.setProp("pause", flag: true)
+    }
+    // Occlude last, after the pause repaint has settled. The home screen's
+    // DOM has a solid background (data-native-video was already removed), so
+    // nothing shows through in the meantime.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+      guard let self = self, self.haltGen == gen, self.surfaceHidden else { return }
       NativePlayerPlugin.probe("halt: deferred occlude")
       self.hideVideo()
     }
