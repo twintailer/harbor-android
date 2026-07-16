@@ -287,7 +287,12 @@ class NativePlayerPlugin: Plugin {
     setOpt("ao", "audiounit")
     setOpt("audio-channels", "auto")
     setOpt("audio-fallback-to-null", "yes")
-    setOpt("vulkan-swap-mode", "fifo")
+    // immediate, not fifo: fifo presents BLOCK until vsync, so the render
+    // thread regularly sits inside a present holding layer resources. An
+    // exit during such a present (episode change happens mid-playback) pits
+    // it against the main thread's CoreAnimation commits. Non-blocking
+    // presents shrink that collision window from ~16ms to microseconds.
+    setOpt("vulkan-swap-mode", "immediate")
     setOpt("video-rotate", "no")
     setOpt("keep-open", "yes")
     setOpt("subs-fallback", "yes")
@@ -299,9 +304,12 @@ class NativePlayerPlugin: Plugin {
     // alive if the playlist ever empties (a failed load, etc.) instead of
     // shutting down — a dead handle would break every later open.
     setOpt("idle", "yes")
-    // Surface warnings/errors (vo/hwdec init failures, network errors) into
-    // the probe log — low volume, invaluable when playback silently no-ops.
-    mpv_request_log_messages(ctx, "warn")
+    // CI only: surface mpv warnings/errors into the probe log. Kept off on
+    // devices — it changes mpv's event traffic, and the device build must
+    // stay byte-for-byte on the user-confirmed-good behavior.
+    if ProcessInfo.processInfo.environment["HARBOR_NATIVE_AUTOTEST"] != nil {
+      mpv_request_log_messages(ctx, "warn")
+    }
     mpv_initialize(ctx)
   }
 
@@ -719,25 +727,20 @@ class NativePlayerPlugin: Plugin {
     haltGen += 1
     let gen = haltGen
     // NEVER `stop` (unloading destroys the video output — swapchain teardown,
-    // rule 1) and do NOTHING in this turn that touches video or CoreAnimation.
-    // Exits from PAUSED already survive; exits from PLAYING still froze, and
-    // the one remaining state change in this turn was `pause` itself — which
-    // makes gpu-next repaint a frame right as WebKit commits the player
-    // unmount. So the immediate halt is audio-only: MUTE (no repaint), and
-    // the video keeps playing invisibly for a beat.
+    // rule 1). PAUSE IN THIS TURN: decode and rendering must stop NOW. The
+    // mute-only experiment (keep playing invisibly, pause 0.7s later) froze
+    // EVERY exit on the phone — even from an already-paused state exits died
+    // — proving an actively presenting render thread during the exit render
+    // storm is the poison, while the user-confirmed-good build always paused
+    // here. Mute too, so the next load starts silent until JS applies state.
+    setProp("pause", flag: true)
     setProp("mute", flag: true)
     surfaceHidden = true
-    // Pause in a QUIET turn once the exit render storm has passed. The
-    // generation guard makes this a no-op if the player was reopened.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-      guard let self = self, self.haltGen == gen else { return }
-      NativePlayerPlugin.probe("halt: deferred pause")
-      self.setProp("pause", flag: true)
-    }
-    // Occlude last, after the pause repaint has settled. The home screen's
-    // DOM has a solid background (data-native-video was already removed), so
-    // nothing shows through in the meantime.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+    // No CoreAnimation change in this turn — the webview opacity flip commits
+    // 0.8s later, once mpv is provably idle and the unmount storm has passed.
+    // The home screen's DOM has a solid background (data-native-video was
+    // already removed), so nothing shows through in the meantime.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
       guard let self = self, self.haltGen == gen, self.surfaceHidden else { return }
       NativePlayerPlugin.probe("halt: deferred occlude")
       self.hideVideo()
