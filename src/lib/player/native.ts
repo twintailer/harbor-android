@@ -72,12 +72,17 @@ export function createNativeBridge(): PlayerBridge {
     });
 
   let debugL: PluginListener | null = null;
+  let lastLoggedStatus = "";
   void (async () => {
     debugL = await addPluginListener("native-player", "debug", (e: { msg?: string }) => {
       mlog(`native: ${e.msg ?? "?"}`);
     });
     statusL = await addPluginListener("native-player", "status", (e: StatusEvent) => {
       if (destroyed) return;
+      if (e.status && e.status !== lastLoggedStatus) {
+        lastLoggedStatus = e.status;
+        mlog(`native: status → ${e.status}`);
+      }
       const status =
         e.status === "ended" && !ended
           ? snap.positionSec > 0 && snap.durationSec > 0 && snap.positionSec > snap.durationSec - 10

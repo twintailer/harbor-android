@@ -58,6 +58,9 @@ class NativePlayerPlugin: Plugin {
   private var ended = false
   private var lastLoadUrl = ""
   private var lastLoadAt: TimeInterval = 0
+  // True between a halt (player closed, webview opaque) and the reveal of the
+  // next file. Purely bookkeeping — the video view itself stays visible.
+  private var surfaceHidden = false
 
   // What the app-delegate hook reports as supported orientations. Portrait by
   // default (phone UI); the player flips it to landscape while a video is
@@ -134,10 +137,6 @@ class NativePlayerPlugin: Plugin {
 
   private func layoutMetal() {
     guard let view = videoView, let layer = metalLayer else { return }
-    // While the surface is hidden (browsing between playbacks) don't touch the
-    // layer at all — no CATransactions competing with the UI. showVideo()
-    // re-runs this when the surface comes back.
-    guard !view.isHidden else { return }
     let bounds = view.bounds
     guard bounds.width > 1, bounds.height > 1 else { return }
     let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
@@ -219,18 +218,40 @@ class NativePlayerPlugin: Plugin {
       guard let ev = mpv_wait_event(mpv, 0) else { break }
       if ev.pointee.event_id == MPV_EVENT_NONE { break }
       if ev.pointee.event_id == MPV_EVENT_SHUTDOWN { break }
-      // After a halt the video view is hidden; reveal it only once the NEW
-      // file is open (not on `duration > 0`, which still reads the previous
-      // file during a `loadfile … replace`).
-      if ev.pointee.event_id == MPV_EVENT_FILE_LOADED, videoView?.isHidden == true {
-        debug("tick: file loaded, showing video")
-        showVideo()
+      if ev.pointee.event_id == MPV_EVENT_START_FILE {
+        debug("mpv: start-file")
+      }
+      // After a halt the surface is occluded; reveal once the NEW file is
+      // open (not on `duration > 0` alone — that could still read the
+      // previous file during a `loadfile … replace`).
+      if ev.pointee.event_id == MPV_EVENT_FILE_LOADED {
+        debug("mpv: file loaded")
+        if surfaceHidden { showVideo() }
+      }
+      // A failed open (dead link, network error) otherwise leaves the UI on a
+      // silent infinite spinner — surface it so the JS side can eject and
+      // retry immediately, and so the exit log names the actual error.
+      if ev.pointee.event_id == MPV_EVENT_END_FILE, let raw = ev.pointee.data {
+        let end = raw.assumingMemoryBound(to: mpv_event_end_file.self).pointee
+        if end.reason == MPV_END_FILE_REASON_ERROR {
+          debug("mpv: end-file error \(String(cString: mpv_error_string(end.error)))")
+          var data: JSObject = [:]
+          data["status"] = "error"
+          trigger("status", data: data)
+        }
       }
     }
     layoutMetal()
 
     let pos = getDouble("time-pos")
     let dur = getDouble("duration")
+    // Belt-and-braces reveal: if the FILE_LOADED event was somehow missed,
+    // a loaded file (the old one is unloaded the moment `replace` starts, so
+    // a duration can only come from the new file) still un-occludes the UI.
+    if surfaceHidden, dur > 0 {
+      debug("tick: reveal via duration")
+      showVideo()
+    }
     let paused = getFlag("pause")
     let idle = getFlag("core-idle")
     let eof = getFlag("eof-reached")
@@ -505,9 +526,9 @@ class NativePlayerPlugin: Plugin {
     hideVideo()
   }
 
-  // Reveal the native video surface behind the (transparent) webview.
+  // Reveal the native video surface by making the webview transparent again.
   private func showVideo() {
-    videoView?.isHidden = false
+    surfaceHidden = false
     guard let webview = self.webview else { return }
     webview.isOpaque = false
     webview.backgroundColor = .clear
@@ -515,9 +536,13 @@ class NativePlayerPlugin: Plugin {
     layoutMetal()
   }
 
-  // Hide the native video surface and paint the webview opaque black.
+  // Occlude the video by painting the webview opaque black. The videoView
+  // itself is NEVER hidden (isHidden/removeFromSuperview): iOS stops handing
+  // drawables to an offscreen CAMetalLayer, and mpv's still-alive render
+  // thread would starve on nextDrawable — wedging the core so the next
+  // loadfile never opens. The opaque webview fully covers it anyway.
   private func hideVideo() {
-    videoView?.isHidden = true
+    surfaceHidden = true
     guard let webview = self.webview else { return }
     webview.isOpaque = true
     webview.backgroundColor = .black
