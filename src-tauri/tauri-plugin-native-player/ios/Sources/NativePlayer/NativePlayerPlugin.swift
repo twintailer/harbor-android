@@ -98,6 +98,96 @@ class NativePlayerPlugin: Plugin {
     ) { [weak self] _ in
       self?.layoutMetal()
     }
+    // CI-only: replay the freeze sequence natively, no webview involved.
+    if let url = ProcessInfo.processInfo.environment["HARBOR_NATIVE_AUTOTEST"], !url.isEmpty {
+      nativeAutotest(url: url)
+    }
+  }
+
+  // MARK: - native autotest (CI freeze reproduction)
+
+  // Drives the exact plugin code paths the phone exercises — lock landscape,
+  // load+play, halt while PLAYING (the episode-change case), unlock/rotate —
+  // entirely from the native side, writing every step plus a main-thread
+  // liveness ticker into the UserDefaults probe log. The CI workflow polls
+  // that log from outside and samples the process the moment ticks stall.
+  // Activated only via the HARBOR_NATIVE_AUTOTEST env var (simctl launch).
+  private func nativeAutotest(url: String) {
+    NativePlayerPlugin.probe("autotest: armed")
+    let main = DispatchQueue.main
+    main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+      NativePlayerPlugin.probe("autotest: lock landscape")
+      self?.applyLandscape()
+    }
+    main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+      guard let self = self else { return }
+      NativePlayerPlugin.probe("autotest: load")
+      self.ensureMpv()
+      self.startPolling()
+      self.command(["loadfile", url, "replace"])
+      self.setProp("pause", flag: false)
+      NativePlayerPlugin.probe("autotest: loadfile sent")
+    }
+    // Playback health checks — proves mpv actually decodes in the simulator.
+    for t in [8.0, 10.0, 12.0] {
+      main.asyncAfter(deadline: .now() + t) { [weak self] in
+        guard let self = self else { return }
+        NativePlayerPlugin.probe(String(format: "autotest: pos=%.2f", self.getDouble("time-pos")))
+      }
+    }
+    // Exit while PLAYING — the phone's failing case (episode change).
+    main.asyncAfter(deadline: .now() + 13.0) { [weak self] in
+      NativePlayerPlugin.probe("autotest: halt (from playing)")
+      self?.haltPlayback()
+      NativePlayerPlugin.probe("autotest: halt returned")
+      // Mirror the JS exit: unlock/rotate right after.
+      NativePlayerPlugin.orientationMask = .portrait
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        NativePlayerPlugin.probe("autotest: portrait apply")
+        if #available(iOS 16.0, *) {
+          let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+          scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+          self?.webview?.window?.rootViewController?
+            .setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
+        NativePlayerPlugin.probe("autotest: portrait applied")
+      }
+    }
+    // Liveness ticker across the freeze window.
+    var t = 13.5
+    while t <= 22.0 {
+      let at = t
+      main.asyncAfter(deadline: .now() + at) {
+        NativePlayerPlugin.probe(String(format: "alive +%.1fs", at))
+      }
+      t += 0.5
+    }
+    // Re-open (second session), then a second halt — the full cycle.
+    main.asyncAfter(deadline: .now() + 23.0) { [weak self] in
+      guard let self = self else { return }
+      NativePlayerPlugin.probe("autotest: reopen")
+      NativePlayerPlugin.orientationMask = .landscape
+      self.applyLandscape()
+      self.startPolling()
+      self.command(["loadfile", url, "replace"])
+      self.setProp("pause", flag: false)
+    }
+    main.asyncAfter(deadline: .now() + 30.0) { [weak self] in
+      NativePlayerPlugin.probe("autotest: halt 2 (from playing)")
+      self?.haltPlayback()
+      NativePlayerPlugin.probe("autotest: halt 2 returned")
+    }
+    var t2 = 30.5
+    while t2 <= 38.0 {
+      let at = t2
+      main.asyncAfter(deadline: .now() + at) {
+        NativePlayerPlugin.probe(String(format: "alive2 +%.1fs", at))
+      }
+      t2 += 0.5
+    }
+    main.asyncAfter(deadline: .now() + 39.0) {
+      NativePlayerPlugin.probe("autotest: SURVIVED")
+    }
   }
 
   // Tauri's generated AppDelegate does not implement
@@ -363,8 +453,11 @@ class NativePlayerPlugin: Plugin {
     let t = Date().timeIntervalSince(probeEpoch)
     var lines = UserDefaults.standard.stringArray(forKey: probeKey) ?? []
     lines.append(String(format: "%.2f  %@", t, msg))
-    if lines.count > 48 { lines.removeFirst(lines.count - 48) }
+    if lines.count > 96 { lines.removeFirst(lines.count - 96) }
     UserDefaults.standard.set(lines, forKey: probeKey)
+    // Force the write to disk NOW: CI polls the plist from outside while the
+    // app runs (and the very next line may never come if the thread wedges).
+    UserDefaults.standard.synchronize()
   }
 
   @objc public func exitProbe(_ invoke: Invoke) {
