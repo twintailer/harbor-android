@@ -183,6 +183,14 @@ async fn unlock_orientation<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), 
     proxy!(app, "unlockOrientation", ())
 }
 
+/// Resolves only if the native main thread is alive (the Swift side hops the
+/// resolve through the main queue). The CI autotest polls this to pinpoint
+/// the moment the main thread wedges.
+#[tauri::command]
+async fn main_ping<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    proxy!(app, "mainPing", ())
+}
+
 /// Returns (and clears) the webview-independent native exit-probe log the
 /// Swift side persisted via UserDefaults — used to tell whether a freeze
 /// killed the native main thread or the WebContent process.
@@ -220,6 +228,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             lock_landscape,
             unlock_orientation,
             exit_probe,
+            main_ping,
         ])
         .setup(|_app, _api| {
             #[cfg(target_os = "ios")]

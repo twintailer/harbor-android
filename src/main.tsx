@@ -113,4 +113,6 @@ requestAnimationFrame(() => {
 // Surface the diagnostic log captured right before the previous run froze.
 if (!isPip && !isModal && !isHdrOverlay) {
   void import("./lib/mobile-debug").then((m) => setTimeout(() => m.showPreviousExitLog(), 800));
+  // CI freeze-reproduction harness; inert unless VITE_HARBOR_AUTOTEST_URL is set.
+  void import("./lib/autotest").then((m) => m.maybeRunAutotest());
 }

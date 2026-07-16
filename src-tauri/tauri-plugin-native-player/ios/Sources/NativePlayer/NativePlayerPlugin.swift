@@ -371,6 +371,13 @@ class NativePlayerPlugin: Plugin {
     invoke.resolve(data)
   }
 
+  // Resolves via a main-queue hop: the returned promise settles only if the
+  // native MAIN thread is alive. The CI autotest pings this to detect the
+  // exact moment the main thread wedges.
+  @objc public func mainPing(_ invoke: Invoke) {
+    DispatchQueue.main.async { invoke.resolve() }
+  }
+
   @objc public func probe(_ invoke: Invoke) {
     invoke.resolve(ProbeResponse(available: true))
   }
@@ -580,7 +587,21 @@ class NativePlayerPlugin: Plugin {
     // once its cache is full; the next open replaces the file via
     // `loadfile … replace` — the episode-change path that never froze.
     setProp("pause", flag: true)
-    hideVideo()
+    surfaceHidden = true
+    // Do NOT commit any CoreAnimation change in this runloop turn. The native
+    // probe showed the main thread completing this block and then never
+    // running another queued item — the signature of the end-of-turn
+    // CATransaction commit deadlocking. gpu-next repaints one frame when
+    // pause flips; committing our webview opacity change at that exact moment
+    // pits the CA commit (main) against the drawable present (render thread)
+    // on the same layer tree. Defer the flip until mpv is provably idle. The
+    // home screen's DOM has a solid background (data-native-video was already
+    // removed), so nothing shows through in the meantime.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+      guard let self = self, self.surfaceHidden else { return }
+      NativePlayerPlugin.probe("halt: deferred occlude")
+      self.hideVideo()
+    }
   }
 
   // Reveal the native video surface by making the webview transparent again.
