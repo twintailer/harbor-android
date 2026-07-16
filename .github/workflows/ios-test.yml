@@ -50,6 +50,37 @@ jobs:
           # The harness only activates when this env var exists at build time.
           echo 'VITE_HARBOR_AUTOTEST_URL=https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' > .env.local
           pnpm build
+          # Inline boot probe: beacons fire from index.html itself, BEFORE the
+          # app bundle runs — pinpoints whether the main JS module ever
+          # executes and reports any early error. CSP is null, so inline JS is
+          # allowed. Runs before the rust build, which embeds dist/.
+          python3 - <<'EOF'
+          p = "dist/index.html"
+          s = open(p, encoding="utf-8").read()
+          probe = """<script>
+          (function(){
+            function b(step){
+              try {
+                var u = 'http://127.0.0.1:8765/beat?step=' + encodeURIComponent(step) + '&t=' + Date.now();
+                if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+                  window.__TAURI_INTERNALS__.invoke('harbor_fetch', { args: { url: u, method: 'GET', headers: {}, timeoutMs: 3000 } }).catch(function(){});
+                }
+                fetch(u).catch(function(){});
+              } catch (e) {}
+            }
+            b('inline-boot' + (window.__TAURI_INTERNALS__ ? '-tauri' : '-NOTAURI'));
+            window.addEventListener('error', function(e){ b('js-error:' + String(e.message).slice(0,120) + '@' + String(e.filename).slice(-40) + ':' + e.lineno); }, true);
+            window.addEventListener('unhandledrejection', function(e){ b('js-rej:' + String(e.reason).slice(0,120)); });
+            window.addEventListener('DOMContentLoaded', function(){ b('dom-ready'); });
+            setTimeout(function(){ b('inline-alive-3s'); }, 3000);
+            setTimeout(function(){ b('inline-alive-10s'); }, 10000);
+          })();
+          </script>"""
+          assert "<head>" in s
+          s = s.replace("<head>", "<head>" + probe, 1)
+          open(p, "w", encoding="utf-8").write(s)
+          print("injected inline probe")
+          EOF
 
       - name: Initialize iOS project
         run: pnpm tauri ios init --ci
