@@ -1,15 +1,15 @@
 name: ios-test
 
-# Freeze-reproduction test: builds Harbor for the iOS SIMULATOR on a macOS
-# runner, launches it with the autotest harness (src/lib/autotest.ts), and
-# replays the exact sequence that freezes on the phone (lock landscape ->
-# load -> play -> exit/halt -> unlock orientation -> re-render). The app
-# streams heartbeats to a listener on the runner:
+# Freeze-reproduction test in PRODUCTION mode: builds Harbor for the iOS
+# SIMULATOR with embedded assets (release rust lib, no dev server — the dev
+# proxy parks the main thread by design and would mask the real bug), then
+# launches it with the autotest harness (src/lib/autotest.ts) which replays
+# the exact sequence that freezes on the phone. The app streams heartbeats
+# to a listener on the runner:
 #   step=js      webview alive
 #   step=native  main_ping round-trip -> native MAIN thread alive
-# If native beats stop, the wedged app process is sampled (`sample`) to
-# capture the exact stack the main thread is stuck in, and the run fails
-# with the evidence uploaded as artifacts.
+# When native beats stop, the wedged process is sampled (`sample`) to capture
+# the stack the main thread is stuck in; everything is uploaded as artifacts.
 #
 # Trigger:  gh workflow run ios-test.yml
 
@@ -18,7 +18,7 @@ on:
 
 jobs:
   freeze-test:
-    name: iOS simulator freeze test
+    name: iOS simulator freeze test (release)
     runs-on: macos-latest
     timeout-minutes: 75
     steps:
@@ -33,7 +33,7 @@ jobs:
           workspaces: |
             harbor-core
             src-tauri
-          key: ios-sim
+          key: ios-sim-release
 
       - uses: pnpm/action-setup@v4
 
@@ -45,11 +45,19 @@ jobs:
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
 
+      - name: Build frontend with autotest baked in
+        run: |
+          # The harness only activates when this env var exists at build time.
+          echo 'VITE_HARBOR_AUTOTEST_URL=https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' > .env.local
+          pnpm build
+
       - name: Initialize iOS project
         run: pnpm tauri ios init --ci
 
-      - name: Add MPVKit Swift package to the app
+      - name: Add MPVKit + replace rust build phase with prebuilt-lib copy
         run: |
+          echo "=== project.yml (original) ==="
+          cat src-tauri/gen/apple/project.yml
           ruby -ryaml -e '
             path = "src-tauri/gen/apple/project.yml"
             y = YAML.load_file(path)
@@ -62,8 +70,34 @@ jobs:
             settings = (target["settings"] ||= {})
             base = (settings["base"] ||= {})
             base["LD_RUNPATH_SEARCH_PATHS"] = "$(inherited) @executable_path/Frameworks"
+            # Find the static lib the project links so the copy lands exactly
+            # where the linker looks for it.
+            lib = deps.filter_map { |d| d["framework"] }.find { |f| f.to_s.end_with?(".a") }
+            raise "no static lib dependency found in project.yml" unless lib
+            copy = "set -e\nmkdir -p \"$SRCROOT/#{File.dirname(lib)}\"\n" \
+                   "cp \"$SRCROOT/../../target/aarch64-apple-ios-sim/release/libharbor_lib.a\" \"$SRCROOT/#{lib}\"\n"
+            replaced = 0
+            walk = lambda { |node|
+              case node
+              when Hash
+                %w[preBuildScripts postCompileScripts postBuildScripts].each do |k|
+                  (node[k] || []).each do |s|
+                    if s.is_a?(Hash) && s["script"].to_s.include?("xcode-script")
+                      s["script"] = copy
+                      s["name"] = "Copy prebuilt Rust lib"
+                      replaced += 1
+                    end
+                  end
+                end
+                node.each_value { |v| walk.call(v) }
+              when Array
+                node.each { |v| walk.call(v) }
+              end
+            }
+            walk.call(y)
+            raise "no xcode-script build phase found to replace" if replaced.zero?
             File.write(path, y.to_yaml)
-            puts "added MPVKit package to #{name}"
+            puts "patched: lib=#{lib}, replaced #{replaced} script phase(s)"
           '
           brew install xcodegen
           (cd src-tauri/gen/apple && xcodegen generate)
@@ -92,19 +126,21 @@ jobs:
           print("Info.plist patched")
           EOF
 
-      - name: Configure autotest env + dev server host
+      - name: Build Rust staticlib (release, simulator)
+        run: cargo build --manifest-path src-tauri/Cargo.toml --lib --release --target aarch64-apple-ios-sim
+
+      - name: Build app for simulator
         run: |
-          # The autotest harness activates only when this env var is present.
-          echo 'VITE_HARBOR_AUTOTEST_URL=https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' > .env.local
-          # Let vite accept connections regardless of which host tauri picks.
-          python3 - <<'EOF'
-          import json
-          p = "src-tauri/tauri.conf.json"
-          c = json.load(open(p))
-          c["build"]["beforeDevCommand"] = "npm run dev -- --host 0.0.0.0"
-          json.dump(c, open(p, "w"), indent=2)
-          print("beforeDevCommand:", c["build"]["beforeDevCommand"])
-          EOF
+          cd src-tauri/gen/apple
+          PROJ=$(ls -d *.xcodeproj | head -1)
+          SCHEME=$(xcodebuild -list -project "$PROJ" 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
+          echo "project=$PROJ scheme=$SCHEME"
+          xcodebuild -project "$PROJ" -scheme "$SCHEME" -configuration release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO build | tail -40
+          APP=$(find build-sim -name '*.app' -path '*iphonesimulator*' | head -1)
+          echo "APP=$PWD/$APP" >> "$GITHUB_ENV"
+          ls -la "$APP"
 
       - name: Start heartbeat listener
         run: |
@@ -125,12 +161,15 @@ jobs:
           nohup python3 beat_server.py > beat_server.log 2>&1 &
           echo "listener up"
 
-      - name: Launch app in simulator (tauri ios dev)
+      - name: Install and launch in simulator
         run: |
-          DEVICE=$(xcrun simctl list devices available | grep -oE 'iPhone [0-9][^(]*' | head -1 | sed 's/ *$//')
-          echo "Using simulator: $DEVICE"
-          nohup pnpm tauri ios dev "$DEVICE" > tauri-dev.log 2>&1 &
-          echo "tauri ios dev started"
+          UDID=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [^(]*\(([0-9A-F-]+)\)' | grep -oE '[0-9A-F-]{36}')
+          echo "Simulator UDID: $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          nohup xcrun simctl launch --console "$UDID" app.harbor > app-console.log 2>&1 &
+          echo "app launched"
 
       - name: Watch heartbeats / detect freeze
         id: watch
@@ -157,16 +196,17 @@ jobs:
               print(f"[watch] TIMEOUT waiting for {step} ({why})")
               return False
 
-          # First build on a cold cache is slow.
-          if not wait_for("boot", 2400, "app never launched"):
-              sys.exit(2)
-          wait_for("phase%3Aplaying", 90, "playback never started (may still proceed)")
-          if not wait_for("phase%3Adestroy", 120, "exit sequence never ran"):
-              sys.exit(2)
+          if not wait_for("boot", 180, "app never phoned home"):
+              pathlib.Path("freeze_detected").write_text("no-boot")
+              sys.exit(1)
+          wait_for("native", 30, "no native main_ping beat ever arrived")
+          wait_for("phase%3Aplaying", 90, "playback never started (continuing)")
+          if not wait_for("phase%3Adestroy", 150, "exit sequence never ran"):
+              pathlib.Path("freeze_detected").write_text("no-destroy")
+              sys.exit(1)
 
-          # Freeze window: native beats must keep flowing for 20s after destroy.
           print("[watch] monitoring native heartbeats after exit…")
-          deadline = time.time() + 30
+          deadline = time.time() + 35
           while time.time() < deadline:
               es = entries()
               native = [t for t, s in es if s == "native"]
@@ -175,17 +215,18 @@ jobs:
               if native and now - native[-1] > 8:
                   print(f"[watch] FREEZE: last native beat {now - native[-1]:.1f}s ago; "
                         f"js alive: {bool(js and now - js[-1] < 3)}")
-                  pathlib.Path("freeze_detected").write_text("1")
+                  pathlib.Path("freeze_detected").write_text("freeze")
                   sys.exit(1)
               if any(s.startswith("phase%3Asurvived") for _, s in es):
                   if native and now - native[-1] < 3:
                       print("[watch] SUCCESS: exit survived, native main thread alive")
                       sys.exit(0)
               time.sleep(1)
-          print("[watch] window ended without explicit survive marker")
           es = entries()
           native = [t for t, s in es if s == "native"]
-          sys.exit(0 if native and time.time() - native[-1] < 5 else 1)
+          ok = bool(native and time.time() - native[-1] < 5)
+          print(f"[watch] window ended; native alive={ok}")
+          sys.exit(0 if ok else 1)
           EOF
 
       - name: Capture wedged main-thread stack
@@ -207,7 +248,7 @@ jobs:
           name: freeze-evidence
           path: |
             beats.log
-            tauri-dev.log
+            app-console.log
             beat_server.log
             sample-mainthread.txt
             freeze.png
