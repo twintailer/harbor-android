@@ -74,12 +74,22 @@ jobs:
                 fetch(u).catch(function(){});
               } catch (e) {}
             }
-            b('inline-boot' + (window.__TAURI_INTERNALS__ ? '-tauri' : '-NOTAURI'));
-            window.addEventListener('error', function(e){ b('js-error:' + String(e.message).slice(0,120) + '@' + String(e.filename).slice(-40) + ':' + e.lineno); }, true);
-            window.addEventListener('unhandledrejection', function(e){ b('js-rej:' + String(e.reason).slice(0,120)); });
-            window.addEventListener('DOMContentLoaded', function(){ b('dom-ready'); });
-            setTimeout(function(){ b('inline-alive-3s'); }, 3000);
-            setTimeout(function(){ b('inline-alive-10s'); }, 10000);
+            // Dependency-free breadcrumb: plain WebKit localStorage. Survives
+            // in the app container even if the tauri bridge and all network
+            // transports are broken; CI copies the sqlite out post-mortem.
+            function ls(step){
+              try {
+                var cur = localStorage.getItem('harbor.inlineProbe') || '';
+                localStorage.setItem('harbor.inlineProbe', cur + Date.now() + ' ' + step + '\n');
+              } catch (e) {}
+            }
+            var boot = 'inline-boot' + (window.__TAURI_INTERNALS__ ? '-tauri' : '-NOTAURI');
+            ls(boot); b(boot);
+            window.addEventListener('error', function(e){ var m = 'js-error:' + String(e.message).slice(0,120) + '@' + String(e.filename).slice(-40) + ':' + e.lineno; ls(m); b(m); }, true);
+            window.addEventListener('unhandledrejection', function(e){ var m = 'js-rej:' + String(e.reason).slice(0,140); ls(m); b(m); });
+            window.addEventListener('DOMContentLoaded', function(){ ls('dom-ready'); b('dom-ready'); });
+            setTimeout(function(){ ls('inline-alive-3s'); b('inline-alive-3s'); }, 3000);
+            setTimeout(function(){ ls('inline-alive-10s'); b('inline-alive-10s'); }, 10000);
           })();
           </script>"""
           assert "<head>" in s
@@ -277,6 +287,7 @@ jobs:
 
       - name: Capture wedged main-thread stack
         if: failure()
+        timeout-minutes: 12
         run: |
           echo "--- beats tail ---"; tail -40 beats.log || true
           PID=$(pgrep -xn Harbor || pgrep -n Harbor || true)
@@ -287,31 +298,34 @@ jobs:
           fi
           xcrun simctl io booted screenshot freeze.png || true
           # Webview-independent evidence from the app container: the native
-          # probe log (UserDefaults) and the JS exit log (WKWebView storage).
+          # probe log (UserDefaults) and the WKWebView storage (inline-probe
+          # breadcrumbs + JS exit log live in LocalStorage sqlite files).
           CONT=$(xcrun simctl get_app_container "$UDID" app.harbor data || true)
           echo "container: $CONT"
           if [ -n "$CONT" ]; then
             plutil -p "$CONT/Library/Preferences/app.harbor.plist" > native-probe.txt 2>&1 || true
             mkdir -p webview-storage
-            find "$CONT/Library" -path '*LocalStorage*' -exec cp -R {} webview-storage/ \; 2>/dev/null || true
+            find "$CONT" -type d -name 'LocalStorage' -exec cp -R {} webview-storage/ \; 2>/dev/null || true
+            find "$CONT" -name '*.localstorage*' -exec cp {} webview-storage/ \; 2>/dev/null || true
+            echo "--- storage files found ---"
+            find "$CONT" \( -type d -name 'LocalStorage' -o -name '*.localstorage*' \) 2>/dev/null || true
           fi
-          # Unified log: page-load failures, custom-scheme errors, WebContent
-          # crashes — the ground truth for a black webview.
-          xcrun simctl spawn "$UDID" log show --last 20m \
-            --predicate 'process == "Harbor" OR process BEGINSWITH "com.apple.WebKit" OR eventMessage CONTAINS[c] "harbor"' \
-            --style compact > syslog.txt 2>&1 || true
-          wc -l syslog.txt || true
+          # The app's real stdout/stderr (RUST_LOG etc.).
+          mkdir -p app-stdio
+          find "$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/tmp" \
+            -name 'launch_console-*' -exec cp {} app-stdio/ \; 2>/dev/null || true
+          ls -la app-stdio || true
           # Crash reports from the sim processes land on the host.
           mkdir -p crashes
           find "$HOME/Library/Logs/DiagnosticReports" -name '*.ips' -newer xcodebuild.log \
             -exec cp {} crashes/ \; 2>/dev/null || true
           ls -la crashes || true
-          # The app's real stdout/stderr (RUST_LOG etc.) — simctl launch
-          # points them at data/tmp/launch_console-* files.
-          mkdir -p app-stdio
-          find "$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/tmp" \
-            -name 'launch_console-*' -exec cp {} app-stdio/ \; 2>/dev/null || true
-          ls -la app-stdio || true
+          # Unified log LAST (it can be slow; the step timeout caps it) and
+          # narrow: the Harbor process only, short window.
+          xcrun simctl spawn "$UDID" log show --last 8m \
+            --predicate 'process == "Harbor"' \
+            --style compact > syslog.txt 2>&1 || true
+          wc -l syslog.txt || true
 
       - name: Upload evidence
         if: always()
