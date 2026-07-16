@@ -79,6 +79,9 @@ class NativePlayerPlugin: Plugin {
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
+    // Webview-independent boot marker: lets CI tell "app never came up" from
+    // "app is fine but its beacons can't reach the runner".
+    NativePlayerPlugin.probe("plugin loaded")
     installOrientationHook()
     NotificationCenter.default.addObserver(
       forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main

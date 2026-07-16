@@ -16,12 +16,22 @@ import { isMobileTauri } from "./platform";
 
 const BEAT_PORT = 8765;
 
+type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+let invokeRef: InvokeFn | null = null;
+
 function beacon(step: string): void {
-  // The iOS simulator shares the host's loopback interface.
-  void fetch(`http://127.0.0.1:${BEAT_PORT}/beat?step=${encodeURIComponent(step)}&t=${Date.now()}`, {
-    method: "GET",
-    cache: "no-store",
-  }).catch(() => {});
+  const url = `http://127.0.0.1:${BEAT_PORT}/beat?step=${encodeURIComponent(step)}&t=${Date.now()}`;
+  // Primary transport: the Rust-side harbor_fetch. In production the page
+  // origin is tauri://localhost and WKWebView blocks plain fetch() to
+  // http://127.0.0.1 as mixed content — that silently ate every beacon on
+  // the first prod-sim run.
+  if (invokeRef) {
+    void invokeRef("harbor_fetch", {
+      args: { url, method: "GET", headers: {}, timeoutMs: 3000 },
+    }).catch(() => {});
+  }
+  // Fallback for dev builds (http origin): plain fetch works there.
+  void fetch(url, { method: "GET", cache: "no-store" }).catch(() => {});
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -31,8 +41,9 @@ export function maybeRunAutotest(): void {
     ?.VITE_HARBOR_AUTOTEST_URL;
   if (!url || !isMobileTauri()) return;
   void (async () => {
-    beacon("boot");
     const { invoke } = await import("@tauri-apps/api/core");
+    invokeRef = invoke as InvokeFn;
+    beacon("boot");
 
     setInterval(() => beacon("js"), 500);
     setInterval(() => {

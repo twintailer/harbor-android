@@ -172,7 +172,9 @@ jobs:
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" "$APP"
-          nohup xcrun simctl launch --console "$UDID" app.harbor > app-console.log 2>&1 &
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          SIMCTL_CHILD_RUST_BACKTRACE=full SIMCTL_CHILD_RUST_LOG=info \
+            nohup xcrun simctl launch --console "$UDID" app.harbor > app-console.log 2>&1 &
           echo "app launched"
 
       - name: Watch heartbeats / detect freeze
@@ -244,6 +246,15 @@ jobs:
             echo "sample captured"
           fi
           xcrun simctl io booted screenshot freeze.png || true
+          # Webview-independent evidence from the app container: the native
+          # probe log (UserDefaults) and the JS exit log (WKWebView storage).
+          CONT=$(xcrun simctl get_app_container "$UDID" app.harbor data || true)
+          echo "container: $CONT"
+          if [ -n "$CONT" ]; then
+            plutil -p "$CONT/Library/Preferences/app.harbor.plist" > native-probe.txt 2>&1 || true
+            mkdir -p webview-storage
+            find "$CONT/Library" -path '*LocalStorage*' -exec cp -R {} webview-storage/ \; 2>/dev/null || true
+          fi
 
       - name: Upload evidence
         if: always()
@@ -257,5 +268,7 @@ jobs:
             sample-mainthread.txt
             freeze.png
             xcodebuild.log
+            native-probe.txt
+            webview-storage/
           if-no-files-found: ignore
           retention-days: 14
