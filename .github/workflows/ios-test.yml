@@ -176,7 +176,13 @@ jobs:
           EOF
 
       - name: Build Rust staticlib (release, simulator)
-        run: cargo build --manifest-path src-tauri/Cargo.toml --lib --release --target aarch64-apple-ios-sim
+        run: |
+          # The frontend is embedded at COMPILE time by tauri's generate_context!
+          # macro. With the cargo cache, harbor_lib is only recompiled when rust
+          # sources change — so a fresh dist/ (new autotest/probe code) would
+          # silently NOT ship. Force re-expansion every run.
+          touch src-tauri/build.rs src-tauri/src/lib.rs src-tauri/src/mobile.rs
+          cargo build --manifest-path src-tauri/Cargo.toml --lib --release --target aarch64-apple-ios-sim
 
       - name: Build app for simulator
         run: |
@@ -320,12 +326,8 @@ jobs:
           find "$HOME/Library/Logs/DiagnosticReports" -name '*.ips' -newer xcodebuild.log \
             -exec cp {} crashes/ \; 2>/dev/null || true
           ls -la crashes || true
-          # Unified log LAST (it can be slow; the step timeout caps it) and
-          # narrow: the Harbor process only, short window.
-          xcrun simctl spawn "$UDID" log show --last 8m \
-            --predicate 'process == "Harbor"' \
-            --style compact > syslog.txt 2>&1 || true
-          wc -l syslog.txt || true
+          # (No `log show` here — it repeatedly blew the step/job timeouts;
+          # the container channels above carry the actionable evidence.)
 
       - name: Upload evidence
         if: always()
