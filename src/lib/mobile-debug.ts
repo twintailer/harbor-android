@@ -62,6 +62,12 @@ export function mlog(msg: string): void {
 /**
  * On launch, show the log captured right before the previous run froze, with a
  * tap-to-dismiss + clear affordance. Call once from the entry point.
+ *
+ * Merges TWO sources: the JS exit log (localStorage, written by the webview)
+ * and the native probe log (UserDefaults, written by the Swift plugin without
+ * any webview involvement). If "js alive" heartbeats stop while "main alive"
+ * probes continue, the WebContent process hung; the reverse means the native
+ * main thread froze.
  */
 export function showPreviousExitLog(): void {
   if (!isEnabled()) return;
@@ -71,23 +77,35 @@ export function showPreviousExitLog(): void {
   } catch {
     /* ignore */
   }
-  if (!prev.trim()) return;
-  const box = document.createElement("div");
-  box.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.92);" +
-    "color:#39ff5a;font:12px/1.5 ui-monospace,Menlo,monospace;padding:48px 16px 16px;" +
-    "white-space:pre-wrap;overflow:auto;-webkit-user-select:text;user-select:text";
-  box.textContent =
-    "LAST EXIT LOG (tap to dismiss)\nlast line = where it froze\n\n" + prev;
-  box.addEventListener("click", () => {
+  void (async () => {
+    let native = "";
     try {
-      localStorage.removeItem(KEY);
+      const { invoke } = await import("@tauri-apps/api/core");
+      const res = (await invoke("plugin:native-player|exit_probe")) as { text?: string } | null;
+      native = res?.text ?? "";
     } catch {
-      /* ignore */
+      /* plugin unavailable (web/desktop) */
     }
-    box.remove();
-  });
-  const mount = () => document.body && document.body.appendChild(box);
-  if (document.body) mount();
-  else window.addEventListener("DOMContentLoaded", mount, { once: true });
+    if (!prev.trim() && !native.trim()) return;
+    const box = document.createElement("div");
+    box.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.92);" +
+      "color:#39ff5a;font:12px/1.5 ui-monospace,Menlo,monospace;padding:48px 16px 16px;" +
+      "white-space:pre-wrap;overflow:auto;-webkit-user-select:text;user-select:text";
+    box.textContent =
+      "LAST EXIT LOG (tap to dismiss)\nlast line = where it froze\n\n" +
+      prev +
+      (native.trim() ? "\n\n--- NATIVE PROBE (webview-independent) ---\n" + native : "");
+    box.addEventListener("click", () => {
+      try {
+        localStorage.removeItem(KEY);
+      } catch {
+        /* ignore */
+      }
+      box.remove();
+    });
+    const mount = () => document.body && document.body.appendChild(box);
+    if (document.body) mount();
+    else window.addEventListener("DOMContentLoaded", mount, { once: true });
+  })();
 }

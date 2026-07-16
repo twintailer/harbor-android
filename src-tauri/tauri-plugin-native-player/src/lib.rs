@@ -183,6 +183,25 @@ async fn unlock_orientation<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), 
     proxy!(app, "unlockOrientation", ())
 }
 
+/// Returns (and clears) the webview-independent native exit-probe log the
+/// Swift side persisted via UserDefaults — used to tell whether a freeze
+/// killed the native main thread or the WebContent process.
+#[tauri::command]
+async fn exit_probe<R: Runtime>(app: tauri::AppHandle<R>) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "ios")]
+    {
+        app.state::<NativePlayer<R>>()
+            .0
+            .run_mobile_plugin::<serde_json::Value>("exitProbe", ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = &app;
+        Ok(serde_json::json!({ "text": "" }))
+    }
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("native-player")
         .invoke_handler(tauri::generate_handler![
@@ -200,6 +219,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             add_subtitle,
             lock_landscape,
             unlock_orientation,
+            exit_probe,
         ])
         .setup(|_app, _api| {
             #[cfg(target_os = "ios")]

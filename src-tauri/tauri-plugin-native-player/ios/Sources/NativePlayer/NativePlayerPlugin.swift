@@ -341,10 +341,34 @@ class NativePlayerPlugin: Plugin {
   // MARK: - commands
 
   // Diagnostic breadcrumb, surfaced on the JS side's persisted exit log.
+  // NOTE: delivery needs BOTH the native main thread (evaluateJavaScript) and
+  // a live WebContent process — if either hangs, the line never lands.
   private func debug(_ msg: String) {
     var data: JSObject = [:]
     data["msg"] = msg
     trigger("debug", data: data)
+  }
+
+  // Webview-independent breadcrumb: persisted via UserDefaults so it survives
+  // a freeze/force-quit even when the WebContent process (which writes the JS
+  // exit log) is the thing that hung. Read back by exitProbe on next launch;
+  // comparing the two logs tells WHICH process died.
+  private static let probeKey = "harbor.nativeProbe"
+  private static let probeEpoch = Date()
+  static func probe(_ msg: String) {
+    let t = Date().timeIntervalSince(probeEpoch)
+    var lines = UserDefaults.standard.stringArray(forKey: probeKey) ?? []
+    lines.append(String(format: "%.2f  %@", t, msg))
+    if lines.count > 48 { lines.removeFirst(lines.count - 48) }
+    UserDefaults.standard.set(lines, forKey: probeKey)
+  }
+
+  @objc public func exitProbe(_ invoke: Invoke) {
+    let lines = UserDefaults.standard.stringArray(forKey: NativePlayerPlugin.probeKey) ?? []
+    UserDefaults.standard.removeObject(forKey: NativePlayerPlugin.probeKey)
+    var data: JSObject = [:]
+    data["text"] = lines.joined(separator: "\n")
+    invoke.resolve(data)
   }
 
   @objc public func probe(_ invoke: Invoke) {
@@ -355,6 +379,7 @@ class NativePlayerPlugin: Plugin {
     let args = try invoke.parseArgs(LoadArgs.self)
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { invoke.resolve(); return }
+      NativePlayerPlugin.probe("load begin")
       self.debug("load: begin")
       // De-dupe racing loads for the same URL. React can mount the player
       // twice (StrictMode / a fast remount), firing two `loadfile replace` in
@@ -407,10 +432,20 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func stop(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
+      NativePlayerPlugin.probe("halt begin")
       self?.debug("stop: halt begin")
       self?.haltPlayback()
       self?.debug("stop: halt end")
+      NativePlayerPlugin.probe("halt end")
       invoke.resolve()
+      // Liveness ticker across the freeze window, independent of the webview:
+      // if these lines keep appearing in the probe log, the native main
+      // thread survived and the hang is inside the WebContent process.
+      for d in [0.5, 1.0, 1.5, 2.0, 3.0, 5.0] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + d) {
+          NativePlayerPlugin.probe(String(format: "main alive +%.1fs", d))
+        }
+      }
     }
   }
 
@@ -476,6 +511,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func lockLandscape(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
+      NativePlayerPlugin.probe("lock landscape")
       self?.applyLandscape()
       invoke.resolve()
     }
@@ -484,11 +520,15 @@ class NativePlayerPlugin: Plugin {
   @objc public func unlockOrientation(_ invoke: Invoke) {
     invoke.resolve()
     // Constrain to portrait right away (any orientation query from here on
-    // sees it), but trigger the actual rotation a beat later, once the player
-    // unmount and the home screen's first render are past — rotating in the
-    // middle of that reflow is asking for a main-thread pile-up.
-    NativePlayerPlugin.orientationMask = .portrait
+    // sees it — set on main, the mask is read by UIKit from main), but
+    // trigger the actual rotation a beat later, once the player unmount and
+    // the home screen's first render are past.
+    DispatchQueue.main.async {
+      NativePlayerPlugin.orientationMask = .portrait
+      NativePlayerPlugin.probe("unlock: mask -> portrait")
+    }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      NativePlayerPlugin.probe("orient: apply begin")
       self?.debug("orient: portrait apply")
       if #available(iOS 16.0, *) {
         let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
@@ -498,6 +538,7 @@ class NativePlayerPlugin: Plugin {
       } else {
         UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
       }
+      NativePlayerPlugin.probe("orient: apply end")
     }
   }
 

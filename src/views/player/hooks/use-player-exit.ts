@@ -106,6 +106,12 @@ export function usePlayerExit(params: {
       mlog("closePlayer: exitPlayback()");
       exitPlayback();
       mlog("closePlayer: exitPlayback returned");
+      // WebContent-side liveness ticker: if these keep landing in the exit
+      // log while the native probes stop, the webview survived and the
+      // native main thread is what froze — and vice versa.
+      for (const ms of [500, 1000, 2000, 3000, 5000]) {
+        setTimeout(() => mlog(`js alive +${ms}ms`), ms);
+      }
     }
   }, [captureExitSnapshot, exitPlayback, src.meta.id, src.meta.name, season, episode, inRoom, isHost, notifyHostLeaving, clearInvite, publishState, exitPip, liveStreamRef, liveUrl, src.url, stopCast, castActiveRef]);
 
