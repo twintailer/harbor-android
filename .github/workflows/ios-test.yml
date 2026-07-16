@@ -255,6 +255,17 @@ jobs:
             mkdir -p webview-storage
             find "$CONT/Library" -path '*LocalStorage*' -exec cp -R {} webview-storage/ \; 2>/dev/null || true
           fi
+          # Unified log: page-load failures, custom-scheme errors, WebContent
+          # crashes — the ground truth for a black webview.
+          xcrun simctl spawn "$UDID" log show --last 20m \
+            --predicate 'process == "Harbor" OR process BEGINSWITH "com.apple.WebKit" OR eventMessage CONTAINS[c] "harbor"' \
+            --style compact > syslog.txt 2>&1 || true
+          wc -l syslog.txt || true
+          # Crash reports from the sim processes land on the host.
+          mkdir -p crashes
+          find "$HOME/Library/Logs/DiagnosticReports" -name '*.ips' -newer xcodebuild.log \
+            -exec cp {} crashes/ \; 2>/dev/null || true
+          ls -la crashes || true
 
       - name: Upload evidence
         if: always()
@@ -270,5 +281,7 @@ jobs:
             xcodebuild.log
             native-probe.txt
             webview-storage/
+            syslog.txt
+            crashes/
           if-no-files-found: ignore
           retention-days: 14
