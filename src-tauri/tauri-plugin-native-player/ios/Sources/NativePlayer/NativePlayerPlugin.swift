@@ -294,6 +294,9 @@ class NativePlayerPlugin: Plugin {
     // alive if the playlist ever empties (a failed load, etc.) instead of
     // shutting down — a dead handle would break every later open.
     setOpt("idle", "yes")
+    // Surface warnings/errors (vo/hwdec init failures, network errors) into
+    // the probe log — low volume, invaluable when playback silently no-ops.
+    mpv_request_log_messages(ctx, "warn")
     mpv_initialize(ctx)
   }
 
@@ -344,10 +347,22 @@ class NativePlayerPlugin: Plugin {
       if ev.pointee.event_id == MPV_EVENT_END_FILE, let raw = ev.pointee.data {
         let end = raw.assumingMemoryBound(to: mpv_event_end_file.self).pointee
         if end.reason == MPV_END_FILE_REASON_ERROR {
-          debug("mpv: end-file error \(String(cString: mpv_error_string(end.error)))")
+          let err = String(cString: mpv_error_string(end.error))
+          NativePlayerPlugin.probe("mpv end-file error: \(err)")
+          debug("mpv: end-file error \(err)")
           var data: JSObject = [:]
           data["status"] = "error"
           trigger("status", data: data)
+        }
+      }
+      // mpv warnings/errors → probe log (requested at "warn" level, so this
+      // stays quiet unless something is actually wrong).
+      if ev.pointee.event_id == MPV_EVENT_LOG_MESSAGE, let raw = ev.pointee.data {
+        let log = raw.assumingMemoryBound(to: mpv_event_log_message.self).pointee
+        let prefix = log.prefix.map { String(cString: $0) } ?? "?"
+        let text = log.text.map { String(cString: $0).trimmingCharacters(in: .newlines) } ?? ""
+        if !text.isEmpty {
+          NativePlayerPlugin.probe("mpv[\(prefix)] \(String(text.prefix(160)))")
         }
       }
     }
@@ -443,28 +458,37 @@ class NativePlayerPlugin: Plugin {
     trigger("debug", data: data)
   }
 
-  // Webview-independent breadcrumb: persisted via UserDefaults so it survives
-  // a freeze/force-quit even when the WebContent process (which writes the JS
-  // exit log) is the thing that hung. Read back by exitProbe on next launch;
-  // comparing the two logs tells WHICH process died.
-  private static let probeKey = "harbor.nativeProbe"
+  // Webview-independent breadcrumb: appended to a plain file in Documents so
+  // it survives a freeze/force-quit even when the WebContent process (which
+  // writes the JS exit log) is the thing that hung. Read back by exitProbe on
+  // the next launch; CI polls the file live from outside the simulator.
+  //
+  // NOT UserDefaults: every UserDefaults write+synchronize is a synchronous
+  // XPC round-trip to cfprefsd, and at heartbeat frequency that daemon backs
+  // up until each probe blocks the main thread for seconds — the observation
+  // itself manufactured a fake freeze in CI. A file append costs microseconds.
   private static let probeEpoch = Date()
+  private static let probeURL: URL = {
+    let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    return dir.appendingPathComponent("probe.log")
+  }()
   static func probe(_ msg: String) {
     let t = Date().timeIntervalSince(probeEpoch)
-    var lines = UserDefaults.standard.stringArray(forKey: probeKey) ?? []
-    lines.append(String(format: "%.2f  %@", t, msg))
-    if lines.count > 96 { lines.removeFirst(lines.count - 96) }
-    UserDefaults.standard.set(lines, forKey: probeKey)
-    // Force the write to disk NOW: CI polls the plist from outside while the
-    // app runs (and the very next line may never come if the thread wedges).
-    UserDefaults.standard.synchronize()
+    guard let data = String(format: "%.2f  %@\n", t, msg).data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: probeURL) {
+      defer { try? handle.close() }
+      handle.seekToEndOfFile()
+      handle.write(data)
+    } else {
+      try? data.write(to: probeURL)
+    }
   }
 
   @objc public func exitProbe(_ invoke: Invoke) {
-    let lines = UserDefaults.standard.stringArray(forKey: NativePlayerPlugin.probeKey) ?? []
-    UserDefaults.standard.removeObject(forKey: NativePlayerPlugin.probeKey)
+    let text = (try? String(contentsOf: NativePlayerPlugin.probeURL, encoding: .utf8)) ?? ""
+    try? FileManager.default.removeItem(at: NativePlayerPlugin.probeURL)
     var data: JSObject = [:]
-    data["text"] = lines.joined(separator: "\n")
+    data["text"] = text
     invoke.resolve(data)
   }
 

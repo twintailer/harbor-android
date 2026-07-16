@@ -156,19 +156,18 @@ jobs:
         run: |
           CONT=$(xcrun simctl get_app_container "$UDID" app.harbor data)
           echo "container: $CONT"
-          PLIST="$CONT/Library/Preferences/app.harbor.plist"
-          echo "PLIST=$PLIST" >> "$GITHUB_ENV"
-          python3 - "$PLIST" <<'EOF'
-          import subprocess, sys, time
+          PROBE="$CONT/Documents/probe.log"
+          echo "PROBE=$PROBE" >> "$GITHUB_ENV"
+          python3 - "$PROBE" <<'EOF'
+          import pathlib, sys, time
 
-          plist = sys.argv[1]
+          probe = pathlib.Path(sys.argv[1])
 
           def lines():
               try:
-                  out = subprocess.run(["plutil", "-p", plist], capture_output=True, text=True, timeout=10).stdout
+                  return probe.read_text().splitlines()
               except Exception:
                   return []
-              return [l.split("=>", 1)[1].strip().strip('"') for l in out.splitlines() if "=>" in l and '"' in l]
 
           def has(prefix, ls):
               return any(l.split("  ", 1)[-1].startswith(prefix) for l in ls)
@@ -219,7 +218,7 @@ jobs:
             echo "sample captured"
           fi
           xcrun simctl io "$UDID" screenshot freeze.png || true
-          plutil -p "$PLIST" > native-probe.txt 2>&1 || true
+          cp "$PROBE" native-probe.txt 2>/dev/null || true
           cat native-probe.txt || true
           mkdir -p crashes
           find "$HOME/Library/Logs/DiagnosticReports" -name '*.ips' -newer xcodebuild.log \
