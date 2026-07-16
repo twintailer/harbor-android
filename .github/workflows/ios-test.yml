@@ -148,9 +148,12 @@ jobs:
           curl -fL --retry 3 -o testmedia/test.mp4 \
             https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4
           ls -la testmedia
-          nohup python3 -m http.server 8880 --directory testmedia > media_server.log 2>&1 &
-          sleep 1
-          curl -sI http://127.0.0.1:8880/test.mp4 | head -3
+          # Needs byte-range support: this mp4 has its moov atom at the end,
+          # so ffmpeg must seek — python's http.server can't (mpv fataled with
+          # "Cannot seek backward in linear streams").
+          nohup npx --yes http-server testmedia -p 8880 --silent > media_server.log 2>&1 &
+          sleep 5
+          curl -sI -H "Range: bytes=0-99" http://127.0.0.1:8880/test.mp4 | head -5
 
       - name: Install and launch with native autotest
         run: |
