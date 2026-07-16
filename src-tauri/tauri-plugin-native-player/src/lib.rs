@@ -183,6 +183,18 @@ async fn unlock_orientation<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), 
     proxy!(app, "unlockOrientation", ())
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeLogArgs {
+    pub msg: String,
+}
+
+/// JS-side breadcrumb into the webview-independent UserDefaults probe log.
+#[tauri::command]
+async fn probe_log<R: Runtime>(app: tauri::AppHandle<R>, args: ProbeLogArgs) -> Result<(), String> {
+    proxy!(app, "probeLog", args)
+}
+
 /// Resolves only if the native main thread is alive (the Swift side hops the
 /// resolve through the main queue). The CI autotest polls this to pinpoint
 /// the moment the main thread wedges.
@@ -229,6 +241,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             unlock_orientation,
             exit_probe,
             main_ping,
+            probe_log,
         ])
         .setup(|_app, _api| {
             #[cfg(target_os = "ios")]

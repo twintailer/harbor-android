@@ -63,7 +63,13 @@ jobs:
               try {
                 var u = 'http://127.0.0.1:8765/beat?step=' + encodeURIComponent(step) + '&t=' + Date.now();
                 if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
-                  window.__TAURI_INTERNALS__.invoke('harbor_fetch', { args: { url: u, method: 'GET', headers: {}, timeoutMs: 3000 } }).catch(function(){});
+                  // No-network channel: lands in UserDefaults, dumped post-mortem.
+                  window.__TAURI_INTERNALS__.invoke('plugin:native-player|probe_log', { args: { msg: step } })
+                    .catch(function(e){ /* swallowed; HTTP channel may still work */ });
+                  window.__TAURI_INTERNALS__.invoke('harbor_fetch', { args: { url: u, method: 'GET', headers: {}, timeoutMs: 3000 } })
+                    .catch(function(e){
+                      window.__TAURI_INTERNALS__.invoke('plugin:native-player|probe_log', { args: { msg: 'fetch-err:' + String(e).slice(0,100) } }).catch(function(){});
+                    });
                 }
                 fetch(u).catch(function(){});
               } catch (e) {}
@@ -169,9 +175,12 @@ jobs:
           PROJ=$(ls -d *.xcodeproj | head -1)
           SCHEME=$(xcodebuild -list -project "$PROJ" 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
           echo "project=$PROJ scheme=$SCHEME"
+          # NOTE: no CODE_SIGNING_ALLOWED=NO — simulator builds ad-hoc sign by
+          # default, and a fully unsigned bundle trips security validation
+          # (seen as -67056 resource errors in the install log).
           xcodebuild -project "$PROJ" -scheme "$SCHEME" -configuration release \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO build \
+            -derivedDataPath build-sim build \
             2>&1 | tee "$GITHUB_WORKSPACE/xcodebuild.log" | tail -40
           APP=$(find build-sim -name '*.app' -path '*iphonesimulator*' | head -1)
           echo "APP=$PWD/$APP" >> "$GITHUB_ENV"
@@ -297,6 +306,12 @@ jobs:
           find "$HOME/Library/Logs/DiagnosticReports" -name '*.ips' -newer xcodebuild.log \
             -exec cp {} crashes/ \; 2>/dev/null || true
           ls -la crashes || true
+          # The app's real stdout/stderr (RUST_LOG etc.) — simctl launch
+          # points them at data/tmp/launch_console-* files.
+          mkdir -p app-stdio
+          find "$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/tmp" \
+            -name 'launch_console-*' -exec cp {} app-stdio/ \; 2>/dev/null || true
+          ls -la app-stdio || true
 
       - name: Upload evidence
         if: always()
@@ -314,5 +329,6 @@ jobs:
             webview-storage/
             syslog.txt
             crashes/
+            app-stdio/
           if-no-files-found: ignore
           retention-days: 14

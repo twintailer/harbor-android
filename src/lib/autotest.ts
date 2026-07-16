@@ -26,6 +26,11 @@ function beacon(step: string): void {
   // http://127.0.0.1 as mixed content — that silently ate every beacon on
   // the first prod-sim run.
   if (invokeRef) {
+    // No-network channel (UserDefaults, dumped by CI post-mortem). Skip the
+    // chatty 500ms heartbeats to keep the 48-line probe log readable.
+    if (!step.startsWith("js") && step !== "native") {
+      void invokeRef("plugin:native-player|probe_log", { args: { msg: step } }).catch(() => {});
+    }
     void invokeRef("harbor_fetch", {
       args: { url, method: "GET", headers: {}, timeoutMs: 3000 },
     }).catch(() => {});

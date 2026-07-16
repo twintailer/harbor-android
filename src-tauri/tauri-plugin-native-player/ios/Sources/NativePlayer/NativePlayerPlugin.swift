@@ -40,6 +40,7 @@ struct SubtitleArgs: Decodable {
   let select: Bool?
 }
 struct ProbeResponse: Encodable { let available: Bool }
+struct ProbeLogArgs: Decodable { let msg: String }
 
 private final class MetalVideoLayer: CAMetalLayer {
   override var drawableSize: CGSize {
@@ -379,6 +380,14 @@ class NativePlayerPlugin: Plugin {
   // exact moment the main thread wedges.
   @objc public func mainPing(_ invoke: Invoke) {
     DispatchQueue.main.async { invoke.resolve() }
+  }
+
+  // JS-side breadcrumb into the webview-independent UserDefaults log — a
+  // beacon channel that needs no network at all; CI dumps it post-mortem.
+  @objc public func probeLog(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ProbeLogArgs.self)
+    NativePlayerPlugin.probe("js: \(args.msg)")
+    invoke.resolve()
   }
 
   @objc public func probe(_ invoke: Invoke) {

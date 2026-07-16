@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "unlock_orientation",
     "exit_probe",
     "main_ping",
+    "probe_log",
     // addPluginListener on the JS side goes through these built-ins.
     "registerListener",
     "remove_listener",

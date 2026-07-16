@@ -17,6 +17,7 @@ permissions = [
     "allow-unlock-orientation",
     "allow-exit-probe",
     "allow-main-ping",
+    "allow-probe-log",
     "allow-registerListener",
     "allow-remove-listener",
 ]
