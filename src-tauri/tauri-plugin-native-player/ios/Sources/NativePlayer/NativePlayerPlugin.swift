@@ -1,15 +1,23 @@
 import AVFoundation
 import Cmpv
+import ObjectiveC
 import Tauri
 import UIKit
 import WebKit
 
 // Native video playback backed by libmpv (the same engine Harbor uses on the
 // desktop). mpv renders into a CAMetalLayer that sits behind the transparent
-// webview, and switches media with `loadfile … replace` — so changing episodes
-// never tears anything down, and exit is a clean mpv_terminate_destroy. This
-// replaced a VLCKit backend whose video-output teardown deadlocked the main
-// thread on exit / episode change.
+// webview.
+//
+// HARD-WON RULE: never tear down (or reconfigure away) mpv's video output on
+// the user-visible path. One mpv instance is created on first play and reused
+// for the app's lifetime; media changes are `loadfile … replace`, exit is just
+// `pause` + hiding the video view. Anything that destroys the Vulkan/MoltenVK
+// swapchain on the CAMetalLayer (mpv `stop`, mpv_terminate_destroy, VLCKit's
+// vout teardown before that) races main-thread CoreAnimation work (the
+// rotate-back-to-portrait + React re-render right after exit) and deadlocks
+// the main thread — every single "freeze" in this app's history was a variant
+// of that collision.
 
 struct LoadArgs: Decodable {
   let url: String
@@ -51,12 +59,24 @@ class NativePlayerPlugin: Plugin {
   private var lastLoadUrl = ""
   private var lastLoadAt: TimeInterval = 0
 
+  // What the app-delegate hook reports as supported orientations. Portrait by
+  // default (phone UI); the player flips it to landscape while a video is
+  // open. Without this, `requestGeometryUpdate(.portrait)` on exit never
+  // sticks — Info.plist allows all orientations, so iOS instantly rotates
+  // back to match how the device is physically held, which is why the app
+  // used to stay stuck in landscape after leaving the player.
+  private static var orientationMask: UIInterfaceOrientationMask = .portrait
+
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
+    installOrientationHook()
     NotificationCenter.default.addObserver(
       forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
-      guard let self = self, self.mpv != nil else { return }
+      // Re-assert landscape only while the player is actually open. (Checking
+      // `mpv != nil` here was wrong once the instance became app-lifetime —
+      // it forced landscape on the home screen after backgrounding.)
+      guard let self = self, NativePlayerPlugin.orientationMask.contains(.landscape) else { return }
       self.applyLandscape()
     }
     NotificationCenter.default.addObserver(
@@ -64,6 +84,22 @@ class NativePlayerPlugin: Plugin {
     ) { [weak self] _ in
       self?.layoutMetal()
     }
+  }
+
+  // Tauri's generated AppDelegate does not implement
+  // application(_:supportedInterfaceOrientationsFor:), so orientation control
+  // falls through to Info.plist (all orientations) and cannot be changed at
+  // runtime. Add the method dynamically; it consults our mask, which makes
+  // lock-landscape / restore-portrait actually stick.
+  private func installOrientationHook() {
+    guard let delegate = UIApplication.shared.delegate else { return }
+    let cls: AnyClass = type(of: delegate)
+    let sel = NSSelectorFromString("application:supportedInterfaceOrientationsForWindow:")
+    guard class_getInstanceMethod(cls, sel) == nil else { return }
+    let block: @convention(block) (AnyObject, UIApplication, UIWindow?) -> UInt = { _, _, _ in
+      NativePlayerPlugin.orientationMask.rawValue
+    }
+    class_addMethod(cls, sel, imp_implementationWithBlock(block), "Q@:@@")
   }
 
   // MARK: - view / mpv setup
@@ -98,6 +134,10 @@ class NativePlayerPlugin: Plugin {
 
   private func layoutMetal() {
     guard let view = videoView, let layer = metalLayer else { return }
+    // While the surface is hidden (browsing between playbacks) don't touch the
+    // layer at all — no CATransactions competing with the UI. showVideo()
+    // re-runs this when the surface comes back.
+    guard !view.isHidden else { return }
     let bounds = view.bounds
     guard bounds.width > 1, bounds.height > 1 else { return }
     let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
@@ -141,10 +181,9 @@ class NativePlayerPlugin: Plugin {
     setOpt("cache", "yes")
     setOpt("demuxer-max-bytes", "64MiB")
     setOpt("network-timeout", "30")
-    // The instance is reused for the app's lifetime. idle=yes is REQUIRED so
-    // the core keeps running after the `stop` command (which clears the
-    // playlist) instead of shutting down — otherwise the reused handle would be
-    // dead on the next open. A re-open is then just another `loadfile replace`.
+    // The instance is reused for the app's lifetime. idle=yes keeps the core
+    // alive if the playlist ever empties (a failed load, etc.) instead of
+    // shutting down — a dead handle would break every later open.
     setOpt("idle", "yes")
     mpv_initialize(ctx)
   }
@@ -180,6 +219,13 @@ class NativePlayerPlugin: Plugin {
       guard let ev = mpv_wait_event(mpv, 0) else { break }
       if ev.pointee.event_id == MPV_EVENT_NONE { break }
       if ev.pointee.event_id == MPV_EVENT_SHUTDOWN { break }
+      // After a halt the video view is hidden; reveal it only once the NEW
+      // file is open (not on `duration > 0`, which still reads the previous
+      // file during a `loadfile … replace`).
+      if ev.pointee.event_id == MPV_EVENT_FILE_LOADED, videoView?.isHidden == true {
+        debug("tick: file loaded, showing video")
+        showVideo()
+      }
     }
     layoutMetal()
 
@@ -289,9 +335,9 @@ class NativePlayerPlugin: Plugin {
       try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try? AVAudioSession.sharedInstance().setActive(true)
       self.ensureMpv()
-      // The instance is reused across opens, so a prior halt may have hidden
-      // the video view and made the webview opaque — bring it back.
-      self.showVideo()
+      // A prior halt hid the video view; tick() re-shows it on the NEW file's
+      // MPV_EVENT_FILE_LOADED — showing it here would flash the previous
+      // video's last frame while this one is still opening.
       self.startPolling()
       UIApplication.shared.isIdleTimerDisabled = true
       self.debug("load: mpv ready")
@@ -400,8 +446,13 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func unlockOrientation(_ invoke: Invoke) {
     invoke.resolve()
-    // Rotate back to portrait a beat later, off the teardown critical path.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+    // Constrain to portrait right away (any orientation query from here on
+    // sees it), but trigger the actual rotation a beat later, once the player
+    // unmount and the home screen's first render are past — rotating in the
+    // middle of that reflow is asking for a main-thread pile-up.
+    NativePlayerPlugin.orientationMask = .portrait
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      self?.debug("orient: portrait apply")
       if #available(iOS 16.0, *) {
         let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
         scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
@@ -414,6 +465,7 @@ class NativePlayerPlugin: Plugin {
   }
 
   private func applyLandscape() {
+    NativePlayerPlugin.orientationMask = .landscape
     if #available(iOS 16.0, *) {
       let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
       scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape))
@@ -441,10 +493,15 @@ class NativePlayerPlugin: Plugin {
     lastLoadUrl = ""
     lastLoadAt = 0
     stopPolling()
-    // Unload the current file only: frees this stream's demuxer/decoder/network
-    // without tearing down the core, the render context or the layer. Non-
-    // blocking (queued to mpv's core), so exit stays instant.
-    command(["stop"])
+    // PAUSE, do not `stop`. The stop command unloads the file, and with no
+    // file loaded mpv destroys its video output — an async Vulkan-swapchain
+    // teardown on our CAMetalLayer that lands right in the middle of the
+    // rotate-to-portrait + home-screen render storm (both exit logs froze
+    // 10–100ms after this point). Pausing touches nothing: core, VO,
+    // swapchain and layer all stay exactly as they are. The demuxer idles
+    // once its cache is full; the next open replaces the file via
+    // `loadfile … replace` — the episode-change path that never froze.
+    setProp("pause", flag: true)
     hideVideo()
   }
 
