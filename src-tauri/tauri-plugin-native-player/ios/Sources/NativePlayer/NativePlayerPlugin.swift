@@ -745,6 +745,15 @@ class NativePlayerPlugin: Plugin {
 
   private func applyLandscape() {
     orientGen += 1
+    // A landscape lock means a player is (re)opening — on an episode switch it
+    // arrives BEFORE the new load, in the same instant a previous exit's
+    // deferred pause/occlude is still pending. Bump haltGen so that pending
+    // work no-ops instead of pausing or blacking out the fresh session. This
+    // was the "previous episode" bug: the deferred occlude fired 1ms before
+    // the reopen's load and left the new episode's surface occluded.
+    // (surfaceHidden stays as-is: if occlude already ran, it's still true and
+    // the reopen's FILE_LOADED -> showVideo un-occludes the webview.)
+    haltGen += 1
     NativePlayerPlugin.orientationMask = .landscape
     if #available(iOS 16.0, *) {
       let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene

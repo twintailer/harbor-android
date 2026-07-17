@@ -3,6 +3,7 @@ import { useRef, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { applyBackup, backupKeyCount, downloadBackup, parseBackup, type Backup } from "@/lib/backup";
 import { useT } from "@/lib/i18n";
+import { isMobileTauri } from "@/lib/platform";
 
 export function BackupRow() {
   const t = useT();
@@ -56,7 +57,11 @@ export function BackupRow() {
       <input
         ref={fileRef}
         type="file"
-        accept=".harbx,application/json,.json"
+        // iOS filters the document picker by registered UTType, and `.harbx`
+        // is a custom extension with none — so an `accept` list greys the
+        // backup file out (unselectable). Drop the filter on mobile; the
+        // content is validated by parseBackup regardless.
+        accept={isMobileTauri() ? undefined : ".harbx,application/json,.json"}
         onChange={onFile}
         className="hidden"
       />
