@@ -110,87 +110,94 @@ class NativePlayerPlugin: Plugin {
   // MARK: - native autotest (CI freeze reproduction)
 
   // Drives the exact plugin code paths the phone exercises — lock landscape,
-  // load+play, halt while PLAYING (the episode-change case), unlock/rotate —
-  // entirely from the native side, writing every step plus a main-thread
-  // liveness ticker into the UserDefaults probe log. The CI workflow polls
-  // that log from outside and samples the process the moment ticks stall.
-  // Activated only via the HARBOR_NATIVE_AUTOTEST env var (simctl launch).
+  // load+play, halt, unlock/rotate — entirely from the native side, writing
+  // every step plus a main-thread liveness ticker into the probe log. The CI
+  // workflow polls that log from outside and samples the process the moment
+  // ticks stall. Activated only via HARBOR_NATIVE_AUTOTEST (simctl launch).
+  //
+  // Crucially it also recreates the phone's OTHER half of the collision: on
+  // the device, the exit lands in the middle of the React home-screen render
+  // (a storm of WebKit CoreAnimation commits on the main thread). The sim's
+  // webview runs no JS, so loadHTMLString drives REAL WebContent renders and
+  // UI-process commits at exactly the exit moment.
   private func nativeAutotest(url: String) {
     NativePlayerPlugin.probe("autotest: armed")
     let main = DispatchQueue.main
-    main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-      NativePlayerPlugin.probe("autotest: lock landscape")
-      self?.applyLandscape()
+
+    func webStorm(_ tag: Int, _ wv: WKWebView?) {
+      var rows = ""
+      for i in 0..<1500 {
+        let hue = (i * 37 + tag * 91) % 360
+        rows += "<div style='padding:6px;background:hsl(\(hue),40%,\(20 + i % 30)%);color:#dde'>row \(i) — storm \(tag) lorem ipsum dolor sit amet</div>"
+      }
+      let html = "<html><body style='margin:0;background:#0b0e14'>\(rows)</body></html>"
+      wv?.loadHTMLString(html, baseURL: nil)
     }
-    main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-      guard let self = self else { return }
-      NativePlayerPlugin.probe("autotest: load")
-      self.ensureMpv()
-      self.startPolling()
-      self.command(["loadfile", url, "replace"])
-      self.setProp("pause", flag: false)
-      NativePlayerPlugin.probe("autotest: loadfile sent")
+
+    func openSession(at t: Double, tag: Int) {
+      main.asyncAfter(deadline: .now() + t) { [weak self] in
+        guard let self = self else { return }
+        NativePlayerPlugin.probe("autotest: open \(tag)")
+        NativePlayerPlugin.orientationMask = .landscape
+        self.applyLandscape()
+        self.ensureMpv()
+        self.startPolling()
+        self.haltGen += 1
+        self.command(["loadfile", url, "replace"])
+        self.setProp("pause", flag: false)
+        self.setProp("mute", flag: false)
+      }
     }
-    // Playback health checks — proves mpv actually decodes in the simulator.
-    for t in [8.0, 10.0, 12.0] {
+
+    func exitSession(at t: Double, tag: Int) {
+      main.asyncAfter(deadline: .now() + t) { [weak self] in
+        guard let self = self else { return }
+        NativePlayerPlugin.probe(String(format: "autotest: exit %d pos=%.2f", tag, self.getDouble("time-pos")))
+        // The unmount render storm and the halt land in the same breath,
+        // exactly like the real exit.
+        webStorm(tag, self.webview)
+        self.haltPlayback()
+        NativePlayerPlugin.probe("autotest: halt \(tag) returned")
+        NativePlayerPlugin.orientationMask = .portrait
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+          NativePlayerPlugin.probe("autotest: portrait \(tag)")
+          if #available(iOS 16.0, *) {
+            let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            self?.webview?.window?.rootViewController?
+              .setNeedsUpdateOfSupportedInterfaceOrientations()
+          }
+        }
+      }
+    }
+
+    // Cycle plan: exits at different playback phases — mid-load, just as
+    // playback starts, and well into playback (the episode-change case).
+    openSession(at: 3.0, tag: 1)
+    exitSession(at: 12.0, tag: 1)   // ~8s in: playing
+    openSession(at: 15.0, tag: 2)
+    exitSession(at: 16.2, tag: 2)   // ~1.2s in: still opening/loading
+    openSession(at: 19.0, tag: 3)
+    exitSession(at: 24.0, tag: 3)   // ~5s in: early playback
+    openSession(at: 27.0, tag: 4)
+    exitSession(at: 36.0, tag: 4)   // ~9s in: settled playback
+    // Playback health probes for cycle 1 (proves real decode in the sim).
+    for t in [8.0, 10.0] {
       main.asyncAfter(deadline: .now() + t) { [weak self] in
         guard let self = self else { return }
         NativePlayerPlugin.probe(String(format: "autotest: pos=%.2f", self.getDouble("time-pos")))
       }
     }
-    // Exit while PLAYING — the phone's failing case (episode change).
-    main.asyncAfter(deadline: .now() + 13.0) { [weak self] in
-      NativePlayerPlugin.probe("autotest: halt (from playing)")
-      self?.haltPlayback()
-      NativePlayerPlugin.probe("autotest: halt returned")
-      // Mirror the JS exit: unlock/rotate right after.
-      NativePlayerPlugin.orientationMask = .portrait
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-        NativePlayerPlugin.probe("autotest: portrait apply")
-        if #available(iOS 16.0, *) {
-          let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-          scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-          self?.webview?.window?.rootViewController?
-            .setNeedsUpdateOfSupportedInterfaceOrientations()
-        }
-        NativePlayerPlugin.probe("autotest: portrait applied")
-      }
-    }
-    // Liveness ticker across the freeze window.
-    var t = 13.5
-    while t <= 22.0 {
+    // Continuous liveness ticker across all cycles.
+    var t = 3.5
+    while t <= 44.0 {
       let at = t
       main.asyncAfter(deadline: .now() + at) {
         NativePlayerPlugin.probe(String(format: "alive +%.1fs", at))
       }
       t += 0.5
     }
-    // Re-open (second session), then a second halt — the full cycle.
-    main.asyncAfter(deadline: .now() + 23.0) { [weak self] in
-      guard let self = self else { return }
-      NativePlayerPlugin.probe("autotest: reopen")
-      NativePlayerPlugin.orientationMask = .landscape
-      self.applyLandscape()
-      self.startPolling()
-      self.haltGen += 1
-      self.command(["loadfile", url, "replace"])
-      self.setProp("pause", flag: false)
-      self.setProp("mute", flag: false)
-    }
-    main.asyncAfter(deadline: .now() + 30.0) { [weak self] in
-      NativePlayerPlugin.probe("autotest: halt 2 (from playing)")
-      self?.haltPlayback()
-      NativePlayerPlugin.probe("autotest: halt 2 returned")
-    }
-    var t2 = 30.5
-    while t2 <= 38.0 {
-      let at = t2
-      main.asyncAfter(deadline: .now() + at) {
-        NativePlayerPlugin.probe(String(format: "alive2 +%.1fs", at))
-      }
-      t2 += 0.5
-    }
-    main.asyncAfter(deadline: .now() + 39.0) {
+    main.asyncAfter(deadline: .now() + 45.0) {
       NativePlayerPlugin.probe("autotest: SURVIVED")
     }
   }
