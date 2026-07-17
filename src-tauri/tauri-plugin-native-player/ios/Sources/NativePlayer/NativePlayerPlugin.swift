@@ -72,6 +72,10 @@ class NativePlayerPlugin: Plugin {
   // Bumped on every halt AND every load: deferred halt work (pause/occlude)
   // no-ops when a reopen supersedes it.
   private var haltGen = 0
+  // Bumped on every orientation change: a deferred rotate-to-portrait from an
+  // exit must no-op when a reopen (previous episode!) relocked landscape in
+  // the meantime — otherwise the new session ends up displayed in portrait.
+  private var orientGen = 0
 
   // What the app-delegate hook reports as supported orientations. Portrait by
   // default (phone UI); the player flips it to landscape while a video is
@@ -371,6 +375,13 @@ class NativePlayerPlugin: Plugin {
       if ev.pointee.event_id == MPV_EVENT_FILE_LOADED {
         debug("mpv: file loaded")
         if surfaceHidden { showVideo() }
+        // Track titles/langs can settle after FILE_LOADED — force a couple of
+        // re-emits so the menus don't keep placeholder labels.
+        for d in [1.5, 4.0] {
+          DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
+            self?.lastTracksSignature = ""
+          }
+        }
       }
       // A failed open (dead link, network error) otherwise leaves the UI on a
       // silent infinite spinner — surface it so the JS side can eject and
@@ -436,7 +447,9 @@ class NativePlayerPlugin: Plugin {
       seekAbsolute(pendingStartAt)
     }
 
-    let sig = "\(getInt("track-list/count"))-\(status)"
+    // Include the selected track ids so selection changes propagate, and the
+    // first sub's lang so late-arriving track metadata triggers a re-emit.
+    let sig = "\(getInt("track-list/count"))-\(status)-\(getInt("aid"))-\(getInt("sid"))-\(getString("track-list/2/lang") ?? "")"
     if sig != lastTracksSignature {
       lastTracksSignature = sig
       emitStatus(status: status, buffering: cache, dur: dur)
@@ -467,11 +480,17 @@ class NativePlayerPlugin: Plugin {
       let id = getInt("track-list/\(i)/id")
       let title = getString("track-list/\(i)/title") ?? ""
       let lang = getString("track-list/\(i)/lang") ?? ""
+      let codec = getString("track-list/\(i)/codec") ?? ""
       let selected = getFlag("track-list/\(i)/selected")
       let label = !title.isEmpty ? title : (!lang.isEmpty ? lang : "\(type.capitalized) \(id)")
       var obj: JSObject = [:]
       obj["id"] = id
       obj["label"] = label
+      // The subtitle/audio menus group by `lang` and show `title` — without
+      // them every track rendered as "Embedded track · UNKNOWN".
+      obj["lang"] = lang
+      obj["title"] = title
+      obj["codec"] = codec
       obj["selected"] = selected
       if type == "audio" { audio.append(obj) } else if type == "sub" { subs.append(obj) }
     }
@@ -548,12 +567,13 @@ class NativePlayerPlugin: Plugin {
       guard let self = self else { invoke.resolve(); return }
       NativePlayerPlugin.probe("load begin")
       self.debug("load: begin")
-      // De-dupe racing loads for the same URL. React can mount the player
-      // twice (StrictMode / a fast remount), firing two `loadfile replace` in
-      // the same instant; two concurrent VkSurface re-inits on one Metal layer
-      // can wedge the GPU. The first load wins; the duplicate is a no-op.
+      // De-dupe racing loads. React can fire two loads in the same instant
+      // (fast remount / a URL-variant swap); two `loadfile replace` racing
+      // through mpv destabilized exactly the sessions that later froze on
+      // exit. Same URL within 1.5s or ANY second load within 0.4s: the first
+      // wins, the duplicate is a no-op (no user flow reopens that fast).
       let now = Date().timeIntervalSince1970
-      if args.url == self.lastLoadUrl, now - self.lastLoadAt < 1.5 {
+      if now - self.lastLoadAt < (args.url == self.lastLoadUrl ? 1.5 : 0.4), self.lastLoadAt > 0 {
         self.debug("load: dup ignored")
         self.setProp("pause", flag: false)
         invoke.resolve()
@@ -693,27 +713,38 @@ class NativePlayerPlugin: Plugin {
     // Constrain to portrait right away (any orientation query from here on
     // sees it — set on main, the mask is read by UIKit from main), but
     // trigger the actual rotation a beat later, once the player unmount and
-    // the home screen's first render are past.
-    DispatchQueue.main.async {
+    // the home screen's first render are past. The generation guard voids
+    // the deferred rotation when a reopen (previous episode) relocks
+    // landscape within that window — otherwise the stale portrait request
+    // landed INSIDE the new session and left the player displayed sideways.
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.orientGen += 1
+      let gen = self.orientGen
       NativePlayerPlugin.orientationMask = .portrait
       NativePlayerPlugin.probe("unlock: mask -> portrait")
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-      NativePlayerPlugin.probe("orient: apply begin")
-      self?.debug("orient: portrait apply")
-      if #available(iOS 16.0, *) {
-        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-        self?.webview?.window?.rootViewController?
-          .setNeedsUpdateOfSupportedInterfaceOrientations()
-      } else {
-        UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        guard let self = self, self.orientGen == gen else {
+          NativePlayerPlugin.probe("orient: stale portrait apply skipped")
+          return
+        }
+        NativePlayerPlugin.probe("orient: apply begin")
+        self.debug("orient: portrait apply")
+        if #available(iOS 16.0, *) {
+          let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+          scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+          self.webview?.window?.rootViewController?
+            .setNeedsUpdateOfSupportedInterfaceOrientations()
+        } else {
+          UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+        }
+        NativePlayerPlugin.probe("orient: apply end")
       }
-      NativePlayerPlugin.probe("orient: apply end")
     }
   }
 
   private func applyLandscape() {
+    orientGen += 1
     NativePlayerPlugin.orientationMask = .landscape
     if #available(iOS 16.0, *) {
       let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene

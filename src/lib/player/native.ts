@@ -20,26 +20,37 @@ export async function probeNativePlayer(): Promise<boolean> {
   }
 }
 
+type NativeTrack = {
+  id: number;
+  label: string;
+  lang?: string;
+  title?: string;
+  codec?: string;
+  selected: boolean;
+};
+
 type StatusEvent = {
   status?: string;
   buffering?: boolean;
   durationSec?: number;
   rate?: number;
-  audioTracks?: { id: number; label: string; selected: boolean }[];
-  subtitleTracks?: { id: number; label: string; selected: boolean }[];
+  audioTracks?: NativeTrack[];
+  subtitleTracks?: NativeTrack[];
   videoWidth?: number;
   videoHeight?: number;
 };
 
 type TimeEvent = { positionSec?: number; durationSec?: number };
 
-function toTracks(
-  list: { id: number; label: string; selected: boolean }[] | undefined,
-  kind: "audio" | "subtitle",
-): TrackInfo[] {
+function toTracks(list: NativeTrack[] | undefined, kind: "audio" | "subtitle"): TrackInfo[] {
   return (list ?? []).map((t) => ({
     id: String(t.id),
     label: t.label,
+    // The track menus group by lang and prefer title — without these every
+    // entry rendered as a generic "Embedded track · UNKNOWN".
+    lang: t.lang || undefined,
+    title: t.title || undefined,
+    codec: t.codec || undefined,
     kind,
     selected: t.selected,
   }));
