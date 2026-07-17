@@ -140,6 +140,9 @@ class NativePlayerPlugin: Plugin {
         NativePlayerPlugin.probe("autotest: open \(tag)")
         NativePlayerPlugin.orientationMask = .landscape
         self.applyLandscape()
+        // Mirror the real load() exactly, active audio session included.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
         self.ensureMpv()
         self.startPolling()
         self.haltGen += 1
@@ -290,7 +293,15 @@ class NativePlayerPlugin: Plugin {
     setOpt("vo", "gpu-next")
     setOpt("gpu-api", "vulkan")
     setOpt("gpu-context", "moltenvk")
-    setOpt("hwdec", "videotoolbox")
+    // videotoolbox-COPY, not zero-copy: still hardware decode, but frames are
+    // copied out of VideoToolbox instead of shared as IOSurfaces. Zero-copy
+    // IOSurfaces are locked by BOTH mpv's render thread (Vulkan/Metal import)
+    // and the system compositor — the same compositor processing the exit's
+    // CoreAnimation commits. Exits from PLAYING (VT frames actively cycling)
+    // froze the main thread inside that commit; exits from PAUSED (no frames
+    // in flight) never did, and the simulator (no VT at all) could not
+    // reproduce it. The copy costs ~one memcpy per frame.
+    setOpt("hwdec", "videotoolbox-copy")
     setOpt("ao", "audiounit")
     setOpt("audio-channels", "auto")
     setOpt("audio-fallback-to-null", "yes")
