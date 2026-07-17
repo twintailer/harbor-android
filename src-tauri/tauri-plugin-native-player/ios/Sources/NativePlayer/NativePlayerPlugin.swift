@@ -54,11 +54,19 @@ private final class MetalVideoLayer: CAMetalLayer {
 }
 
 class NativePlayerPlugin: Plugin {
+  // RULE 4 (the pre-halt freeze class): the MAIN thread must NEVER call into
+  // mpv. mpv_get/set_property and mpv_command are synchronous with the core;
+  // on a stalled demuxer (dead stream link) they block for up to
+  // network-timeout seconds — polling state from the main thread wedged it
+  // for 30s at a time, which read as a freeze that struck BEFORE the halt
+  // could even run. Every mpv interaction lives on this serial queue; the
+  // main thread only touches UIKit/CoreAnimation.
+  private let mpvQueue = DispatchQueue(label: "app.harbor.mpv", qos: .userInitiated)
   private var mpv: OpaquePointer?
   private var videoView: UIView?
   private var metalLayer: MetalVideoLayer?
   private weak var webview: WKWebView?
-  private var pollTimer: Timer?
+  private var pollSource: DispatchSourceTimer?
   private var lastAppliedDrawableSize: CGSize = .zero
   private var pendingStartAt: Double = 0
   private var startApplied = true
@@ -91,6 +99,12 @@ class NativePlayerPlugin: Plugin {
     // "app is fine but its beacons can't reach the runner".
     NativePlayerPlugin.probe("plugin loaded")
     installOrientationHook()
+    // Create the video view + Metal layer NOW (plugin load runs on main):
+    // ensureMpv then never needs UIKit, so it can live on mpvQueue. The
+    // webview may not be in the hierarchy yet, so retry briefly.
+    DispatchQueue.main.async { [weak self] in
+      self?.ensureViewRetrying()
+    }
     NotificationCenter.default.addObserver(
       forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -144,27 +158,33 @@ class NativePlayerPlugin: Plugin {
         NativePlayerPlugin.probe("autotest: open \(tag)")
         NativePlayerPlugin.orientationMask = .landscape
         self.applyLandscape()
-        // Mirror the real load() exactly, active audio session included.
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        self.ensureMpv()
-        self.startPolling()
-        self.haltGen += 1
-        self.command(["loadfile", url, "replace"])
-        self.setProp("pause", flag: false)
-        self.setProp("mute", flag: false)
+        // Mirror the real load(): mpv work on mpvQueue, UI on main.
+        self.mpvQueue.async { [weak self] in
+          guard let self = self else { return }
+          try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+          try? AVAudioSession.sharedInstance().setActive(true)
+          self.ensureMpv()
+          self.startPolling()
+          self.haltGen += 1
+          self.command(["loadfile", url, "replace"])
+          self.setProp("pause", flag: false)
+          self.setProp("mute", flag: false)
+        }
       }
     }
 
     func exitSession(at t: Double, tag: Int) {
       main.asyncAfter(deadline: .now() + t) { [weak self] in
         guard let self = self else { return }
-        NativePlayerPlugin.probe(String(format: "autotest: exit %d pos=%.2f", tag, self.getDouble("time-pos")))
-        // The unmount render storm and the halt land in the same breath,
-        // exactly like the real exit.
+        // The unmount render storm (main/WebKit) and the halt (mpvQueue) land
+        // in the same breath, exactly like the real exit.
         webStorm(tag, self.webview)
-        self.haltPlayback()
-        NativePlayerPlugin.probe("autotest: halt \(tag) returned")
+        self.mpvQueue.async { [weak self] in
+          guard let self = self else { return }
+          NativePlayerPlugin.probe(String(format: "autotest: exit %d pos=%.2f", tag, self.getDouble("time-pos")))
+          self.haltPlayback()
+          NativePlayerPlugin.probe("autotest: halt \(tag) returned")
+        }
         NativePlayerPlugin.orientationMask = .portrait
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
           NativePlayerPlugin.probe("autotest: portrait \(tag)")
@@ -190,7 +210,7 @@ class NativePlayerPlugin: Plugin {
     exitSession(at: 36.0, tag: 4)   // ~9s in: settled playback
     // Playback health probes for cycle 1 (proves real decode in the sim).
     for t in [8.0, 10.0] {
-      main.asyncAfter(deadline: .now() + t) { [weak self] in
+      mpvQueue.asyncAfter(deadline: .now() + t) { [weak self] in
         guard let self = self else { return }
         NativePlayerPlugin.probe(String(format: "autotest: pos=%.2f", self.getDouble("time-pos")))
       }
@@ -226,6 +246,16 @@ class NativePlayerPlugin: Plugin {
   }
 
   // MARK: - view / mpv setup
+
+  // Main thread only. Retries until the webview has a superview to sit under.
+  private func ensureViewRetrying(_ attempts: Int = 0) {
+    ensureView()
+    if videoView == nil, attempts < 60 {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        self?.ensureViewRetrying(attempts + 1)
+      }
+    }
+  }
 
   private func ensureView() {
     guard videoView == nil, let webview = self.webview, let superview = webview.superview else {
@@ -283,10 +313,13 @@ class NativePlayerPlugin: Plugin {
     CATransaction.commit()
   }
 
+  // mpvQueue only. The view/layer were created eagerly at plugin load.
   private func ensureMpv() {
     guard mpv == nil else { return }
-    ensureView()
-    guard let layer = metalLayer else { return }
+    guard let layer = metalLayer else {
+      NativePlayerPlugin.probe("ensureMpv: metal layer not ready")
+      return
+    }
 
     let ctx = mpv_create()
     guard let ctx = ctx else { return }
@@ -335,21 +368,21 @@ class NativePlayerPlugin: Plugin {
     mpv_initialize(ctx)
   }
 
-  // The poll timer only needs to run while a file is playing. Running it on the
-  // home/detail screens would do a CATransaction/layoutMetal every 0.25s on the
-  // main thread for nothing, competing with React's rendering.
+  // mpvQueue only (start/stop are called from mpvQueue contexts). The tick
+  // runs entirely off-main: property reads on a stalled demuxer may block for
+  // seconds, and that must never touch the UI thread.
   private func startPolling() {
-    guard pollTimer == nil else { return }
-    let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-      self?.tick()
-    }
-    RunLoop.main.add(timer, forMode: .common)
-    pollTimer = timer
+    guard pollSource == nil else { return }
+    let timer = DispatchSource.makeTimerSource(queue: mpvQueue)
+    timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+    timer.setEventHandler { [weak self] in self?.tick() }
+    timer.resume()
+    pollSource = timer
   }
 
   private func stopPolling() {
-    pollTimer?.invalidate()
-    pollTimer = nil
+    pollSource?.cancel()
+    pollSource = nil
   }
 
   private func setOpt(_ name: String, _ value: String) {
@@ -374,11 +407,14 @@ class NativePlayerPlugin: Plugin {
       // previous file during a `loadfile … replace`).
       if ev.pointee.event_id == MPV_EVENT_FILE_LOADED {
         debug("mpv: file loaded")
-        if surfaceHidden { showVideo() }
+        if surfaceHidden {
+          surfaceHidden = false
+          DispatchQueue.main.async { [weak self] in self?.showVideo() }
+        }
         // Track titles/langs can settle after FILE_LOADED — force a couple of
         // re-emits so the menus don't keep placeholder labels.
         for d in [1.5, 4.0] {
-          DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
+          mpvQueue.asyncAfter(deadline: .now() + d) { [weak self] in
             self?.lastTracksSignature = ""
           }
         }
@@ -408,7 +444,8 @@ class NativePlayerPlugin: Plugin {
         }
       }
     }
-    layoutMetal()
+    // (No layoutMetal here: layer geometry is pure UI, handled on main by the
+    // orientation observer and showVideo. This tick must stay UIKit-free.)
 
     let pos = getDouble("time-pos")
     let dur = getDouble("duration")
@@ -417,7 +454,8 @@ class NativePlayerPlugin: Plugin {
     // a duration can only come from the new file) still un-occludes the UI.
     if surfaceHidden, dur > 0 {
       debug("tick: reveal via duration")
-      showVideo()
+      surfaceHidden = false
+      DispatchQueue.main.async { [weak self] in self?.showVideo() }
     }
     let paused = getFlag("pause")
     let idle = getFlag("core-idle")
@@ -518,13 +556,17 @@ class NativePlayerPlugin: Plugin {
   // up until each probe blocks the main thread for seconds — the observation
   // itself manufactured a fake freeze in CI. A file append costs microseconds.
   private static let probeEpoch = Date()
+  private static let probeLock = NSLock()
   private static let probeURL: URL = {
     let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     return dir.appendingPathComponent("probe.log")
   }()
+  // Callable from any thread (main, mpvQueue, autotest timers).
   static func probe(_ msg: String) {
     let t = Date().timeIntervalSince(probeEpoch)
     guard let data = String(format: "%.2f  %@\n", t, msg).data(using: .utf8) else { return }
+    probeLock.lock()
+    defer { probeLock.unlock() }
     if let handle = try? FileHandle(forWritingTo: probeURL) {
       defer { try? handle.close() }
       handle.seekToEndOfFile()
@@ -563,7 +605,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func load(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(LoadArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       guard let self = self else { invoke.resolve(); return }
       NativePlayerPlugin.probe("load begin")
       self.debug("load: begin")
@@ -590,7 +632,7 @@ class NativePlayerPlugin: Plugin {
       self.startPolling()
       // Cancel any deferred halt work (pause/occlude) from a previous exit.
       self.haltGen += 1
-      UIApplication.shared.isIdleTimerDisabled = true
+      DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = true }
       self.debug("load: mpv ready")
       self.pendingStartAt = args.startAtSec ?? 0
       self.startApplied = self.pendingStartAt <= 0
@@ -608,21 +650,21 @@ class NativePlayerPlugin: Plugin {
   }
 
   @objc public func play(_ invoke: Invoke) {
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.setProp("pause", flag: false)
       invoke.resolve()
     }
   }
 
   @objc public func pause(_ invoke: Invoke) {
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.setProp("pause", flag: true)
       invoke.resolve()
     }
   }
 
   @objc public func stop(_ invoke: Invoke) {
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       NativePlayerPlugin.probe("halt begin")
       self?.debug("stop: halt begin")
       self?.haltPlayback()
@@ -630,8 +672,8 @@ class NativePlayerPlugin: Plugin {
       NativePlayerPlugin.probe("halt end")
       invoke.resolve()
       // Liveness ticker across the freeze window, independent of the webview:
-      // if these lines keep appearing in the probe log, the native main
-      // thread survived and the hang is inside the WebContent process.
+      // scheduled on MAIN on purpose — its whole point is proving the main
+      // thread is alive.
       for d in [0.5, 1.0, 1.5, 2.0, 3.0, 5.0] {
         DispatchQueue.main.asyncAfter(deadline: .now() + d) {
           NativePlayerPlugin.probe(String(format: "main alive +%.1fs", d))
@@ -642,7 +684,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func seek(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SeekArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.seekAbsolute(args.sec)
       invoke.resolve()
     }
@@ -650,7 +692,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func setVolume(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(VolumeArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.setProp("volume", double: max(0, min(1, args.volume)) * 100)
       invoke.resolve()
     }
@@ -658,7 +700,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func setMuted(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(MutedArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.setProp("mute", flag: args.muted)
       invoke.resolve()
     }
@@ -666,7 +708,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func setRate(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(RateArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.setProp("speed", double: args.rate)
       invoke.resolve()
     }
@@ -674,7 +716,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func setAudioTrack(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(TrackArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.setProp("aid", int: Int64(args.id))
       invoke.resolve()
     }
@@ -682,7 +724,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func setSubtitleTrack(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(TrackArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       if args.id < 0 {
         self?.setPropString("sid", "no")
       } else {
@@ -694,7 +736,7 @@ class NativePlayerPlugin: Plugin {
 
   @objc public func addSubtitle(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SubtitleArgs.self)
-    DispatchQueue.main.async { [weak self] in
+    mpvQueue.async { [weak self] in
       self?.command(["sub-add", args.url, (args.select ?? true) ? "select" : "auto"])
       invoke.resolve()
     }
@@ -752,8 +794,9 @@ class NativePlayerPlugin: Plugin {
     // was the "previous episode" bug: the deferred occlude fired 1ms before
     // the reopen's load and left the new episode's surface occluded.
     // (surfaceHidden stays as-is: if occlude already ran, it's still true and
-    // the reopen's FILE_LOADED -> showVideo un-occludes the webview.)
-    haltGen += 1
+    // the reopen's FILE_LOADED -> showVideo un-occludes the webview.
+    // haltGen is mpvQueue-confined, so hop.)
+    mpvQueue.async { [weak self] in self?.haltGen += 1 }
     NativePlayerPlugin.orientationMask = .landscape
     if #available(iOS 16.0, *) {
       let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
@@ -777,8 +820,9 @@ class NativePlayerPlugin: Plugin {
   // very next `stop` never even ran — exactly what the exit log showed
   // (…"bridge cleanup: done" then nothing). Reusing one instance makes exit
   // instant and destroys nothing; the next open is just another loadfile.
+  // mpvQueue only.
   private func haltPlayback() {
-    UIApplication.shared.isIdleTimerDisabled = false
+    DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = false }
     lastLoadUrl = ""
     lastLoadAt = 0
     stopPolling()
@@ -791,17 +835,17 @@ class NativePlayerPlugin: Plugin {
     // — proving an actively presenting render thread during the exit render
     // storm is the poison, while the user-confirmed-good build always paused
     // here. Mute too, so the next load starts silent until JS applies state.
+    // (Both are safe here: this runs on mpvQueue, never on main.)
     setProp("pause", flag: true)
     setProp("mute", flag: true)
     surfaceHidden = true
-    // No CoreAnimation change in this turn — the webview opacity flip commits
-    // 0.8s later, once mpv is provably idle and the unmount storm has passed.
-    // The home screen's DOM has a solid background (data-native-video was
-    // already removed), so nothing shows through in the meantime.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+    // The webview opacity flip is UI work and commits on MAIN 0.8s later,
+    // once mpv is provably idle and the unmount storm has passed. The gen
+    // check re-runs on mpvQueue so a reopen reliably cancels it.
+    mpvQueue.asyncAfter(deadline: .now() + 0.8) { [weak self] in
       guard let self = self, self.haltGen == gen, self.surfaceHidden else { return }
       NativePlayerPlugin.probe("halt: deferred occlude")
-      self.hideVideo()
+      DispatchQueue.main.async { [weak self] in self?.hideVideo() }
     }
   }
 
@@ -828,52 +872,8 @@ class NativePlayerPlugin: Plugin {
     webview.scrollView.backgroundColor = .black
   }
 
-  // Full teardown of mpv. NOT used on the normal exit path (see haltPlayback);
-  // kept for a real shutdown/memory-pressure hook. Runs the blocking
-  // mpv_terminate_destroy off the main thread and keeps the layer alive until
-  // it finishes so mpv's render thread can't touch a freed CAMetalLayer.
-  private func teardown() {
-    UIApplication.shared.isIdleTimerDisabled = false
-    // mpv is about to be destroyed, so the next load must always go through —
-    // clear the de-dupe key or a re-open of the same URL would be skipped.
-    lastLoadUrl = ""
-    lastLoadAt = 0
-    pollTimer?.invalidate()
-    pollTimer = nil
-    let view = videoView
-    videoView = nil
-    metalLayer = nil
-    if let webview = self.webview {
-      webview.isOpaque = true
-      webview.backgroundColor = .black
-      webview.scrollView.backgroundColor = .black
-    }
-    // Detach the video view NOW so the webview UI is visible immediately, but
-    // do NOT let it deallocate yet: mpv was handed a *raw* pointer to the
-    // CAMetalLayer (via `wid`, passUnretained), and its render/vo thread keeps
-    // touching that layer while it shuts down. Freeing the layer here would be
-    // a use-after-free on mpv's background thread — a crash/hang that looked
-    // exactly like the "freeze".
-    view?.removeFromSuperview()
-    // mpv_terminate_destroy blocks until the whole player has shut down — which
-    // includes draining decode/network threads, so on a stalled stream it can
-    // hang for seconds. Never run it on the main thread (that was the freeze).
-    // Nil the handle so nothing else touches it, then destroy off-main.
-    if let ctx = mpv {
-      mpv = nil
-      // Retain the view (and thus its MetalVideoLayer sublayer) until mpv is
-      // fully torn down, so the `wid` pointer stays valid for the whole drain.
-      let keepAlive = view
-      DispatchQueue.global(qos: .userInitiated).async {
-        mpv_terminate_destroy(ctx)
-        // mpv is gone; the layer is now safe to release. Do it on the main
-        // thread — UIView deallocation must happen there.
-        DispatchQueue.main.async {
-          _ = keepAlive
-        }
-      }
-    }
-  }
+  // (No teardown function on purpose: the mpv instance is app-lifetime by
+  // design — see rule 1. iOS reclaims everything at process exit.)
 
   // MARK: - mpv helpers
 
