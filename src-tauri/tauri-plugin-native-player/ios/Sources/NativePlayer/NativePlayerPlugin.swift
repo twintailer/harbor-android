@@ -74,9 +74,10 @@ class NativePlayerPlugin: Plugin {
   private var ended = false
   private var lastLoadUrl = ""
   private var lastLoadAt: TimeInterval = 0
-  // True between a halt (player closed, webview opaque) and the reveal of the
-  // next file. Purely bookkeeping — the video view itself stays visible.
-  private var surfaceHidden = false
+  // True whenever the webview is opaque (boot, and between a halt and the
+  // next file's reveal). Starts true: the webview is only made transparent
+  // at the first reveal. Purely bookkeeping — the video view stays visible.
+  private var surfaceHidden = true
   // Bumped on every halt AND every load: deferred halt work (pause/occlude)
   // no-ops when a reopen supersedes it.
   private var haltGen = 0
@@ -261,51 +262,60 @@ class NativePlayerPlugin: Plugin {
     guard videoView == nil, let webview = self.webview, let superview = webview.superview else {
       return
     }
-    let view = UIView(frame: superview.bounds)
-    view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    // FIXED LANDSCAPE GEOMETRY, decided once: the player is landscape-only,
+    // and mpv's VO learns its surface size at init — wid embedding has no
+    // resize channel, so a size chosen while the app is still portrait (the
+    // eager creation runs at launch) would stick forever and render the
+    // video into the bottom-left corner. Landscape dimensions are the same
+    // regardless of current orientation via max/min.
+    let screen = UIScreen.main.bounds
+    let w = max(screen.width, screen.height)
+    let h = min(screen.width, screen.height)
+    let scale = UIScreen.main.nativeScale
+    let view = UIView(frame: CGRect(x: 0, y: 0, width: w, height: h))
+    view.autoresizingMask = []
     view.backgroundColor = .black
     view.isUserInteractionEnabled = false
 
     let layer = MetalVideoLayer()
     layer.contentsGravity = .resizeAspect
-    layer.contentsScale = UIScreen.main.nativeScale
+    layer.contentsScale = scale
     layer.framebufferOnly = true
     layer.backgroundColor = UIColor.black.cgColor
     layer.anchorPoint = .zero
     layer.position = .zero
+    layer.frame = view.bounds
+    layer.drawableSize = CGSize(width: (w * scale).rounded(), height: (h * scale).rounded())
+    lastAppliedDrawableSize = layer.drawableSize
     view.layer.addSublayer(layer)
 
+    // The webview stays OPAQUE here — it only goes transparent at the first
+    // reveal (showVideo), so nothing of this surface shows through at boot.
     superview.insertSubview(view, belowSubview: webview)
-    webview.isOpaque = false
-    webview.backgroundColor = .clear
-    webview.scrollView.backgroundColor = .clear
 
     self.videoView = view
     self.metalLayer = layer
-    layoutMetal()
   }
 
   private func layoutMetal() {
     guard let view = videoView, let layer = metalLayer else { return }
-    // NEVER touch the layer while the surface is occluded. The exit rotation
-    // (landscape → portrait) is the only rotation that ever hits a LIVE mpv
-    // swapchain (playback locks the orientation), and resizing drawableSize
-    // here makes MoltenVK rebuild the swapchain from mpv's render thread
-    // while the main thread is mid-rotation inside its own CATransaction on
-    // the same layer — CALayer is not thread-safe, and that collision was the
-    // exit freeze. While occluded the geometry doesn't matter; showVideo()
-    // re-runs this once the surface is visible again.
+    // While occluded the geometry doesn't matter and the layer must not be
+    // touched (resizing a live swapchain vs. main-thread CA was an early
+    // freeze); showVideo() re-runs this once the surface is visible again.
     guard !surfaceHidden else { return }
-    let bounds = view.bounds
-    guard bounds.width > 1, bounds.height > 1 else { return }
+    // Re-assert the fixed landscape geometry (idempotent; the values never
+    // change by design).
+    let screen = UIScreen.main.bounds
+    let w = max(screen.width, screen.height)
+    let h = min(screen.width, screen.height)
+    let frame = CGRect(x: 0, y: 0, width: w, height: h)
     let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
-    let drawable = CGSize(
-      width: (bounds.width * scale).rounded(),
-      height: (bounds.height * scale).rounded())
+    let drawable = CGSize(width: (w * scale).rounded(), height: (h * scale).rounded())
     CATransaction.begin()
     CATransaction.setDisableActions(true)
+    view.frame = frame
     layer.contentsScale = scale
-    layer.frame = bounds
+    layer.frame = frame
     if drawable != lastAppliedDrawableSize {
       layer.drawableSize = drawable
       lastAppliedDrawableSize = drawable
@@ -354,7 +364,9 @@ class NativePlayerPlugin: Plugin {
     setOpt("subs-match-os-language", "yes")
     setOpt("cache", "yes")
     setOpt("demuxer-max-bytes", "64MiB")
-    setOpt("network-timeout", "30")
+    // 10s, not 30: a dead link should fail fast into the JS eject/retry flow
+    // — and it bounds how long a stalled core can delay queued work.
+    setOpt("network-timeout", "10")
     // The instance is reused for the app's lifetime. idle=yes keeps the core
     // alive if the playlist ever empties (a failed load, etc.) instead of
     // shutting down — a dead handle would break every later open.
@@ -877,16 +889,22 @@ class NativePlayerPlugin: Plugin {
 
   // MARK: - mpv helpers
 
+  // All writes are ASYNC (fire-and-forget): the sync variants wait for the
+  // core, and a core wedged on a dead network stream (or dead sockets after
+  // backgrounding) would jam the whole mpvQueue behind it — the halt for the
+  // next exit then never ran, which read as a frozen player. The async
+  // variants copy their arguments and return immediately; replies arrive as
+  // (ignored) COMMAND_REPLY/SET_PROPERTY_REPLY events in the tick drain.
   private func command(_ args: [String]) {
     guard let mpv = mpv else { return }
-    // strdup gives mutable copies we own and must free; mpv_command wants a
+    // strdup gives mutable copies we own and must free; mpv wants a
     // NULL-terminated `const char **`, so hand it UnsafePointer views.
     let owned: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
     defer { for p in owned where p != nil { free(p) } }
     var cargs: [UnsafePointer<CChar>?] = owned.map { $0.map { UnsafePointer($0) } }
     cargs.append(nil)
     cargs.withUnsafeMutableBufferPointer { buf in
-      _ = mpv_command(mpv, buf.baseAddress)
+      _ = mpv_command_async(mpv, 0, buf.baseAddress)
     }
   }
 
@@ -897,21 +915,24 @@ class NativePlayerPlugin: Plugin {
   private func setProp(_ name: String, flag: Bool) {
     guard let mpv = mpv else { return }
     var v: Int32 = flag ? 1 : 0
-    mpv_set_property(mpv, name, MPV_FORMAT_FLAG, &v)
+    _ = mpv_set_property_async(mpv, 0, name, MPV_FORMAT_FLAG, &v)
   }
   private func setProp(_ name: String, double: Double) {
     guard let mpv = mpv else { return }
     var v = double
-    mpv_set_property(mpv, name, MPV_FORMAT_DOUBLE, &v)
+    _ = mpv_set_property_async(mpv, 0, name, MPV_FORMAT_DOUBLE, &v)
   }
   private func setProp(_ name: String, int: Int64) {
     guard let mpv = mpv else { return }
     var v = int
-    mpv_set_property(mpv, name, MPV_FORMAT_INT64, &v)
+    _ = mpv_set_property_async(mpv, 0, name, MPV_FORMAT_INT64, &v)
   }
   private func setPropString(_ name: String, _ value: String) {
     guard let mpv = mpv else { return }
-    mpv_set_property_string(mpv, name, value)
+    value.withCString { cstr in
+      var ptr: UnsafePointer<CChar>? = cstr
+      _ = mpv_set_property_async(mpv, 0, name, MPV_FORMAT_STRING, &ptr)
+    }
   }
 
   private func getDouble(_ name: String) -> Double {

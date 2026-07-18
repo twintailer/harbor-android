@@ -364,7 +364,7 @@ export function Discover({ active = true }: { active?: boolean }) {
   return (
     <main
       ref={scrollCb}
-      className={`flex-1 overflow-y-auto ${mobile ? "px-4 pb-24 pt-2" : "px-12 pb-20 pt-28"}`}
+      className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none ${mobile ? "px-4 pb-24 pt-2" : "px-12 pb-20 pt-28"}`}
     >
       <ScrollRootContext.Provider value={scrollEl}>
         <div data-tauri-drag-region className={`flex flex-col ${mobile ? "gap-8" : "gap-14"}`}>
