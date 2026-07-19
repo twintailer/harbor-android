@@ -80,7 +80,7 @@ export function EpisodeRow({
       data-no-card-ring
       onContextMenu={(e) => onContextMenu?.(e, ep.seasonNumber, ep.episodeNumber, progress.watched)}
       onMouseEnter={() => prefetchSegments(meta, playEpisode)}
-      className="group flex gap-6 rounded-2xl px-4 py-5 transition-colors hover:bg-elevated/30 max-sm:gap-3 max-sm:px-2 max-sm:py-3"
+      className="group flex gap-6 rounded-2xl px-4 py-5 transition-colors hover:bg-elevated/30 max-sm:flex-wrap max-sm:gap-3 max-sm:px-2 max-sm:py-3"
     >
       <button
         onClick={() =>
@@ -93,9 +93,9 @@ export function EpisodeRow({
           })
         }
         onFocus={() => prefetchSegments(meta, playEpisode)}
-        className="flex min-w-0 flex-1 gap-6 text-start max-sm:flex-col max-sm:gap-2.5"
+        className="flex min-w-0 flex-1 gap-6 text-start max-sm:items-center max-sm:gap-3"
       >
-        <div className="relative w-[200px] shrink-0 overflow-hidden rounded-lg max-sm:w-full">
+        <div className="relative w-[200px] shrink-0 overflow-hidden rounded-lg max-sm:w-[40%]">
           <div className={spoiler?.thumb ? SPOILER_THUMB_CLASS : undefined}>
             <Poster
               src={still}
@@ -105,12 +105,14 @@ export function EpisodeRow({
               onError={() => setImgIdx((i) => i + 1)}
             />
           </div>
-          <div className="absolute inset-0 flex items-center justify-center bg-canvas/40 opacity-0 transition-opacity group-hover:opacity-100">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-ink text-canvas">
-              <Play size={18} fill="currentColor" />
+          {/* Desktop: play appears on hover. Mobile: always show a compact
+              Netflix-style play circle. */}
+          <div className="absolute inset-0 flex items-center justify-center bg-canvas/40 opacity-0 transition-opacity group-hover:opacity-100 max-sm:bg-transparent max-sm:opacity-100">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-ink text-canvas max-sm:h-9 max-sm:w-9 max-sm:bg-black/45 max-sm:text-white/95 max-sm:backdrop-blur-[2px]">
+              <Play size={18} fill="currentColor" className="max-sm:ms-0.5" />
             </div>
           </div>
-          <span className="absolute start-2 top-2 rounded-md bg-canvas/95 px-1.5 py-0.5 text-[11px] font-semibold text-ink">
+          <span className="absolute start-2 top-2 rounded-md bg-canvas/95 px-1.5 py-0.5 text-[11px] font-semibold text-ink max-sm:hidden">
             {ep.episodeNumber}
           </span>
           {progress.watched && (
@@ -119,7 +121,7 @@ export function EpisodeRow({
             </span>
           )}
           {settings.showEpisodeRating && ratingValue != null && ratingValue > 0 && (
-            <div className="pointer-events-none absolute bottom-2 start-2 z-[5] flex items-center gap-1.5 rounded-md bg-black/55 px-1.5 py-0.5 drop-shadow-md backdrop-blur-sm">
+            <div className="pointer-events-none absolute bottom-2 start-2 z-[5] flex items-center gap-1.5 rounded-md bg-black/55 px-1.5 py-0.5 drop-shadow-md backdrop-blur-sm max-sm:hidden">
               <EpisodeRatingBadge value={ratingValue} isImdb={ratingIsImdb} />
             </div>
           )}
@@ -132,14 +134,16 @@ export function EpisodeRow({
             </div>
           )}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <h4 className="flex items-center gap-2 truncate text-[16px] font-semibold text-ink">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 max-sm:gap-1">
+          <h4 className="flex items-center gap-2 truncate text-[16px] font-semibold text-ink max-sm:text-[13.5px] max-sm:leading-snug">
             <span className={`truncate ${spoiler?.title ? SPOILER_TEXT_CLASS : ""}`}>
+              {/* Netflix style on mobile: the number lives in the title. */}
+              <span className="hidden max-sm:inline">{ep.episodeNumber}. </span>
               {ep.name || t("Episode {n}", { n: ep.episodeNumber })}
             </span>
             {isUpcomingEpisode(ep) ? <UpcomingBadge /> : isNewEpisode(ep) && <NewBadge />}
           </h4>
-          <p className="flex flex-wrap items-center gap-x-2 text-[12px] text-ink-subtle">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-ink-subtle max-sm:text-[11.5px]">
             <span>
               {[
                 `S${ep.seasonNumber} E${ep.episodeNumber}`,
@@ -149,6 +153,11 @@ export function EpisodeRow({
                 .filter(Boolean)
                 .join("  ·  ")}
             </span>
+            {settings.showEpisodeRating && ratingValue != null && ratingValue > 0 && (
+              <span className="hidden items-center gap-1 max-sm:inline-flex">
+                <EpisodeRatingBadge value={ratingValue} isImdb={ratingIsImdb} />
+              </span>
+            )}
             {progress.watched && watchedAgo && (
               <span className="text-emerald-300/85">· {t("Watched {ago}", { ago: watchedAgo })}</span>
             )}
@@ -160,7 +169,7 @@ export function EpisodeRow({
           </p>
           {ep.overview && (
             <p
-              className={`line-clamp-2 text-[13.5px] leading-relaxed text-ink-muted ${
+              className={`line-clamp-2 text-[13.5px] leading-relaxed text-ink-muted max-sm:hidden ${
                 spoiler?.desc ? SPOILER_TEXT_CLASS : ""
               }`}
             >
@@ -179,6 +188,17 @@ export function EpisodeRow({
         <Eye size={18} strokeWidth={2} />
       </button>
       <EpisodeDownloadButton meta={meta} episode={playEpisode} />
+      {/* Mobile: the description spans the full width BELOW the row, like
+          Netflix (the outer container wraps on small screens). */}
+      {ep.overview && (
+        <p
+          className={`hidden basis-full text-[12px] leading-relaxed text-ink-muted max-sm:line-clamp-3 ${
+            spoiler?.desc ? SPOILER_TEXT_CLASS : ""
+          }`}
+        >
+          {ep.overview}
+        </p>
+      )}
     </div>
   );
 }

@@ -1010,7 +1010,7 @@ export function DetailView({
   return (
     <main
       ref={scrollRef}
-      className="absolute inset-0 z-30 overflow-y-auto bg-canvas"
+      className="absolute inset-0 z-30 overflow-y-auto overflow-x-hidden overscroll-x-none bg-canvas"
     >
       <section className="relative">
         <div

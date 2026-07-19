@@ -72,13 +72,93 @@ export function EpisodeGridCard({
 
   return (
     <div onMouseEnter={enter} onMouseLeave={leave} className={`group relative ${preview ? "z-30" : ""}`}>
+      {/* Mobile: compact Netflix-style row — thumb left, title/meta right,
+          download at the row end, description below the whole row. */}
+      <div className="sm:hidden">
+        <div className="flex items-center gap-3">
+          <button
+            data-ep={g.number}
+            data-no-card-ring
+            onClick={g.play}
+            onContextMenu={ctx}
+            className="relative aspect-video w-[42%] shrink-0 overflow-hidden rounded-lg text-start"
+          >
+            <div className={thumbDim}>
+              <Poster src={still} seed={g.key} ratio="landscape" lazy onError={() => setImgIdx((i) => i + 1)} />
+            </div>
+            <span className="absolute inset-0 flex items-center justify-center">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45 backdrop-blur-[2px]">
+                <Play size={15} fill="currentColor" className="ms-0.5 text-white/95" />
+              </span>
+            </span>
+            {g.upcoming && (
+              <span className="absolute bottom-1.5 start-1.5">
+                <UpcomingBadge />
+              </span>
+            )}
+            {partial && (
+              <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/55">
+                <div className="h-full bg-accent" style={{ width: `${Math.max(2, progress.ratio * 100)}%` }} />
+              </div>
+            )}
+          </button>
+          <button
+            onClick={g.play}
+            onContextMenu={ctx}
+            className="flex min-w-0 flex-1 flex-col gap-1 text-start"
+          >
+            <span className="flex items-start gap-1.5">
+              <span className={`line-clamp-2 text-[13px] font-semibold leading-snug text-ink ${spoiler?.title ? SPOILER_TEXT_CLASS : ""}`}>
+                {g.number}. {g.title}
+              </span>
+              {g.filler && <FillerBadge />}
+            </span>
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] text-ink-subtle">
+              {g.runtime ? <span>{t("{n} min", { n: g.runtime })}</span> : null}
+              {settings.showEpisodeRating && g.rating && g.rating > 0 ? (
+                <span className="flex items-center gap-1">
+                  <EpisodeRatingBadge value={g.rating} isImdb={!!g.ratingIsImdb} />
+                </span>
+              ) : null}
+              {watched ? (
+                <span className="flex items-center gap-0.5 font-semibold text-emerald-300">
+                  <Check size={11} strokeWidth={3} />
+                  {t("Watched")}
+                </span>
+              ) : minsLeft > 0 ? (
+                <span className="font-semibold text-accent">{t("{n}m left", { n: minsLeft })}</span>
+              ) : null}
+            </span>
+          </button>
+          <EpisodeDownloadButton
+            meta={cardMeta}
+            episode={{
+              season: g.season,
+              episode: g.number,
+              runtime: g.runtime ?? undefined,
+              name: g.title,
+              still: g.stills[0],
+              overview: g.overview,
+            }}
+            size={34}
+          />
+        </div>
+        {settings.showEpisodeDescription && g.overview && (
+          <p
+            className={`mt-1.5 line-clamp-3 text-[12px] leading-relaxed text-ink-muted ${spoiler?.desc ? SPOILER_TEXT_CLASS : ""}`}
+          >
+            {g.overview}
+          </p>
+        )}
+      </div>
+      {/* Desktop / tablet: the original stacked card. */}
       <button
         data-ep={g.number}
         data-no-card-ring
         onClick={g.play}
         onContextMenu={ctx}
         onFocus={() => prefetchSegments(cardMeta, { season: g.season, episode: g.number })}
-        className="flex w-full flex-col gap-2.5 text-start"
+        className="hidden w-full flex-col gap-2.5 text-start sm:flex"
       >
         <div className="relative aspect-video overflow-hidden rounded-xl">
           <div className={thumbDim}>
