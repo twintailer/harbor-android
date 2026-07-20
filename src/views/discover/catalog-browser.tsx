@@ -191,7 +191,7 @@ export function CatalogBrowser() {
   return (
     <div className="flex shrink-0 flex-col gap-3">
       <h2 className="text-[15px] font-semibold tracking-tight text-ink">{t("Browse your catalogs")}</h2>
-      <div className="flex w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl bg-elevated/30 p-2 ring-1 ring-edge-soft/50">
+      <div className="flex w-full max-w-full flex-wrap items-center gap-2 rounded-2xl bg-elevated/30 p-2 ring-1 ring-edge-soft/50 sm:w-fit">
         <PillSelect
           label={t("Type")}
           value={typeLabel(type)}

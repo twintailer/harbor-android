@@ -1,18 +1,21 @@
-import { downloadDir } from "@tauri-apps/api/path";
+import { documentDir, downloadDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/settings";
+import { isMobileTauri } from "@/lib/platform";
 import { ToggleRow } from "@/views/settings/shared";
 
 export function DownloadsSection() {
   const { settings, update } = useSettings();
   const [systemDefault, setSystemDefault] = useState<string>("");
+  const mobile = isMobileTauri();
 
   useEffect(() => {
     let cancelled = false;
-    downloadDir()
+    // iOS: writable + Files-visible location is Documents (see downloads-store).
+    (mobile ? documentDir() : downloadDir())
       .then((d) => {
         if (!cancelled) setSystemDefault(d);
       })
@@ -20,7 +23,7 @@ export function DownloadsSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mobile]);
 
   const current = settings.downloadDir || systemDefault;
   const isCustom = !!settings.downloadDir;
@@ -69,7 +72,7 @@ export function DownloadsSection() {
             {current || "Detecting..."}
           </span>
         </div>
-        {current && (
+        {!mobile && current && (
           <button
             type="button"
             onClick={revealCurrent}
@@ -80,25 +83,28 @@ export function DownloadsSection() {
           </button>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={pickFolder}
-          className="flex h-10 items-center gap-2 rounded-lg bg-ink px-4 text-[13px] font-semibold text-canvas transition-transform hover:scale-[1.02] active:scale-[0.97]"
-        >
-          Choose folder
-        </button>
-        {isCustom && (
+      {/* iOS: no folder picker and the sandbox only allows Documents. */}
+      {!mobile && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={resetToDefault}
-            className="flex h-10 items-center gap-1.5 rounded-lg border border-edge-soft px-3 text-[12.5px] font-medium text-ink-muted transition-colors hover:border-edge hover:text-ink"
+            onClick={pickFolder}
+            className="flex h-10 items-center gap-2 rounded-lg bg-ink px-4 text-[13px] font-semibold text-canvas transition-transform hover:scale-[1.02] active:scale-[0.97]"
           >
-            <RotateCcw size={13} strokeWidth={2.2} />
-            Reset to default
+            Choose folder
           </button>
-        )}
-      </div>
+          {isCustom && (
+            <button
+              type="button"
+              onClick={resetToDefault}
+              className="flex h-10 items-center gap-1.5 rounded-lg border border-edge-soft px-3 text-[12.5px] font-medium text-ink-muted transition-colors hover:border-edge hover:text-ink"
+            >
+              <RotateCcw size={13} strokeWidth={2.2} />
+              Reset to default
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

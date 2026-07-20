@@ -225,11 +225,11 @@ export function AnimeEpisodes({
   return (
     <div data-anime-episodes className="flex flex-col gap-6 scroll-mt-24">
       <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-6">
+      <div className="flex items-center justify-between gap-6 max-sm:flex-col max-sm:items-start max-sm:gap-3">
         <h3 className="text-[22px] font-medium tracking-tight text-ink">
           {isOneOff ? t("Movie") : t("Episodes")}
         </h3>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 max-sm:w-full max-sm:gap-2.5 max-sm:overflow-x-auto max-sm:overscroll-x-contain max-sm:pb-1 max-sm:[&>*]:shrink-0">
           {!isOneOff && (
             <p className="text-[13px] text-ink-subtle">
               {displayEpisodes.length === 1

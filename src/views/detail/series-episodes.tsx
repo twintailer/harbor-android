@@ -253,9 +253,9 @@ export function SeriesEpisodes({
 
   return (
     <div data-episodes className="flex scroll-mt-24 flex-col gap-6">
-      <div className="flex items-end justify-between gap-6">
+      <div className="flex items-end justify-between gap-6 max-sm:flex-col max-sm:items-start max-sm:gap-3">
         <h3 className="text-[22px] font-medium tracking-tight text-ink">{t("Episodes")}</h3>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 max-sm:w-full max-sm:overflow-x-auto max-sm:overscroll-x-contain max-sm:pb-1 max-sm:[&>*]:shrink-0">
           <RandomEpisodeButton meta={meta} seasons={seasons} />
           <EpisodeLayoutToggle
             value={settings.episodeLayout}

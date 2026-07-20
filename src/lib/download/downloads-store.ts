@@ -6,6 +6,7 @@ import type { Meta } from "@/lib/cinemeta";
 import type { PlayEpisode } from "@/lib/view";
 import { buildDefaultFilename, sanitizeName } from "./filename";
 import { startDownload, type DownloadHandle } from "./video-download";
+import { isMobileTauri } from "@/lib/platform";
 
 export type DownloadItem = {
   id: string;
@@ -97,8 +98,18 @@ async function resolveDir(): Promise<string> {
   } catch {
     /* fall through to system default */
   }
-  // iOS has no system Downloads dir; the app's Documents folder shows up in
-  // the Files app (UIFileSharingEnabled is set by the iOS build workflow).
+  // iOS: only the app's Documents folder is writable, and it shows up in the
+  // Files app (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace are set
+  // by the iOS build workflow). systemDownloadDir() there returns a sandbox
+  // path that is NOT writable, so create_dir_all failed with EPERM ("Operation
+  // not permitted"). Prefer Documents on mobile.
+  if (isMobileTauri()) {
+    return (
+      (await documentDir().catch(() => "")) ||
+      (await systemDownloadDir().catch(() => "")) ||
+      ""
+    );
+  }
   return (
     (await systemDownloadDir().catch(() => "")) ||
     (await documentDir().catch(() => "")) ||

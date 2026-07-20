@@ -106,7 +106,7 @@ export function LibraryView({ active }: { active: boolean }) {
   return (
     <main
       ref={scrollRef}
-      className="flex-1 overflow-y-auto px-5 pt-24 pb-14 sm:px-8 lg:px-12 lg:pt-28"
+      className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none px-5 pt-24 pb-14 sm:px-8 lg:px-12 lg:pt-28"
     >
       <div data-tauri-drag-region className="flex flex-col gap-7">
         <Header
@@ -165,7 +165,7 @@ function Header({
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-1 border-b border-edge-soft">
+      <div className="flex items-center gap-1 overflow-x-auto overscroll-x-contain border-b border-edge-soft [scrollbar-width:none] max-sm:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden">
         <TabBtn active={tab === "watchlist"} onClick={() => onTab("watchlist")}>
           <Bookmark size={14} strokeWidth={2.2} />
           {t("Watchlist")}
