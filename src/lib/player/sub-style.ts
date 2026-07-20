@@ -40,14 +40,22 @@ export async function applySubStyle(
   s: Settings,
   context: SubRenderContext = { assNativeActive: false, imageNativeActive: false },
 ): Promise<void> {
+  const mobile = isMobileTauri();
   const override = s.subAssOverride;
-  const assMargins = context.assNativeActive && override !== "no" ? "yes" : "no";
+  // "Resize only" (scale) and "Use my style" (force) both need mpv to apply
+  // OUR margins to styled ASS subs, otherwise size/position do nothing. On
+  // desktop that's gated on knowing ASS is active; the iOS native player
+  // never reports assNativeActive, so force margins there whenever the user
+  // picked any override — that's what made "position and size only" a no-op.
+  const assMargins = (mobile ? override !== "no" : context.assNativeActive && override !== "no")
+    ? "yes"
+    : "no";
   const marginY = clamp(Number(s.subMarginY) || 0, 0, 100);
   const opacity = clamp(Number(s.subOpacity ?? 1), 0.1, 1);
   const boxOpacity = clamp(Number(s.subBoxOpacity ?? 0.6), 0, 1);
   const isBox = s.subStyle === "box";
   const isShadow = s.subStyle === "shadow";
-  const reposition = !context.assNativeActive || override !== "no";
+  const reposition = mobile ? override !== "no" : !context.assNativeActive || override !== "no";
   const props: Array<[string, unknown]> = [
     ["sub-font-size", 32],
     ["sub-font", mpvFontFor(s.subFontFamily)],
@@ -71,7 +79,6 @@ export async function applySubStyle(
   // the desktop command and doesn't exist there, so every style prop was
   // silently swallowed (subtitles ignored font size/color/force-override).
   // Route to the native plugin's generic setter on mobile.
-  const mobile = isMobileTauri();
   await Promise.all(
     props.map(([name, value]) =>
       (mobile
