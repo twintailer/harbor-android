@@ -41,6 +41,10 @@ struct SubtitleArgs: Decodable {
 }
 struct ProbeResponse: Encodable { let available: Bool }
 struct ProbeLogArgs: Decodable { let msg: String }
+struct SetPropArgs: Decodable {
+  let name: String
+  let value: String
+}
 
 private final class MetalVideoLayer: CAMetalLayer {
   override var drawableSize: CGSize {
@@ -352,12 +356,21 @@ class NativePlayerPlugin: Plugin {
     setOpt("ao", "audiounit")
     setOpt("audio-channels", "auto")
     setOpt("audio-fallback-to-null", "yes")
-    // immediate, not fifo: fifo presents BLOCK until vsync, so the render
-    // thread regularly sits inside a present holding layer resources. An
-    // exit during such a present (episode change happens mid-playback) pits
-    // it against the main thread's CoreAnimation commits. Non-blocking
-    // presents shrink that collision window from ~16ms to microseconds.
-    setOpt("vulkan-swap-mode", "immediate")
+    // fifo (vsync), NOT immediate: immediate presents as fast as the GPU can
+    // render — uncapped frame rate keeps the GPU pinned and the phone runs
+    // hot. fifo caps at the display refresh. (immediate was an early attempt
+    // at the exit freeze; the real fixes were hwdec=videotoolbox-copy and
+    // moving all mpv calls off the main thread, so vsync is safe now.)
+    setOpt("vulkan-swap-mode", "fifo")
+    // Phone thermal budget: turn OFF the expensive gpu-next quality features
+    // that are pointless on a 6-inch screen and are the main GPU heat source.
+    setOpt("deband", "no")            // debanding shader is costly
+    setOpt("scale", "bilinear")       // cheap upscaler (vs. the default)
+    setOpt("dscale", "bilinear")      // cheap downscaler (matters for 4K->1080)
+    setOpt("cscale", "bilinear")
+    setOpt("dither", "no")
+    setOpt("hdr-compute-peak", "no")  // avoid per-frame HDR peak analysis
+    setOpt("vd-lavc-threads", "0")    // let ffmpeg pick, don't over-thread
     setOpt("video-rotate", "no")
     setOpt("keep-open", "yes")
     setOpt("subs-fallback", "yes")
@@ -750,6 +763,17 @@ class NativePlayerPlugin: Plugin {
     let args = try invoke.parseArgs(SubtitleArgs.self)
     mpvQueue.async { [weak self] in
       self?.command(["sub-add", args.url, (args.select ?? true) ? "select" : "auto"])
+      invoke.resolve()
+    }
+  }
+
+  // Generic mpv property setter, used by the JS sub-style code so subtitle
+  // appearance (font size/color/border, sub-ass-override=force, margins, …)
+  // works on iOS exactly like desktop. Any mpv property settable as a string.
+  @objc public func setProperty(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SetPropArgs.self)
+    mpvQueue.async { [weak self] in
+      self?.setPropString(args.name, args.value)
       invoke.resolve()
     }
   }

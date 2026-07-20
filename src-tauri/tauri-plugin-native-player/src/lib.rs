@@ -173,6 +173,18 @@ async fn add_subtitle<R: Runtime>(app: tauri::AppHandle<R>, args: SubtitleArgs) 
     proxy!(app, "addSubtitle", args)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPropArgs {
+    pub name: String,
+    pub value: String,
+}
+
+#[tauri::command]
+async fn set_property<R: Runtime>(app: tauri::AppHandle<R>, args: SetPropArgs) -> Result<(), String> {
+    proxy!(app, "setProperty", args)
+}
+
 #[tauri::command]
 async fn lock_landscape<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     proxy!(app, "lockLandscape", ())
@@ -237,6 +249,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             set_audio_track,
             set_subtitle_track,
             add_subtitle,
+            set_property,
             lock_landscape,
             unlock_orientation,
             exit_probe,

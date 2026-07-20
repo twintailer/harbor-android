@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Settings } from "@/lib/settings";
+import { isMobileTauri } from "@/lib/platform";
 
 function clamp(n: number, lo: number, hi: number): number {
   if (!Number.isFinite(n)) return lo;
@@ -66,9 +67,19 @@ export async function applySubStyle(
     ["sub-bold", s.subBold ? "yes" : "no"],
     ["sub-pos", reposition ? clamp(100 - marginY, 0, 100) : 100],
   ];
+  // iOS uses the native-player plugin (its own libmpv); `mpv_set_property` is
+  // the desktop command and doesn't exist there, so every style prop was
+  // silently swallowed (subtitles ignored font size/color/force-override).
+  // Route to the native plugin's generic setter on mobile.
+  const mobile = isMobileTauri();
   await Promise.all(
     props.map(([name, value]) =>
-      invoke("mpv_set_property", { name, value }).catch(() => {}),
+      (mobile
+        ? invoke("plugin:native-player|set_property", {
+            args: { name, value: String(value) },
+          })
+        : invoke("mpv_set_property", { name, value })
+      ).catch(() => {}),
     ),
   );
 }

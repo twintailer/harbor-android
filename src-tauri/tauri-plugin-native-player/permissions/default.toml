@@ -13,6 +13,7 @@ permissions = [
     "allow-set-audio-track",
     "allow-set-subtitle-track",
     "allow-add-subtitle",
+    "allow-set-property",
     "allow-lock-landscape",
     "allow-unlock-orientation",
     "allow-exit-probe",

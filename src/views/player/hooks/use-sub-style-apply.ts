@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { isLinuxDesktop, isMacDesktop } from "@/lib/platform";
+import { isLinuxDesktop, isMacDesktop, isMobileTauri } from "@/lib/platform";
 import { applyMotionInterp } from "@/lib/player/motion-interp";
 import { applyRtxHdr } from "@/lib/player/rtx-hdr";
 import { applySubStyle } from "@/lib/player/sub-style";
@@ -18,7 +18,9 @@ export function useSubStyleApply(params: {
     params;
 
   useEffect(() => {
-    if (engine !== "mpv") return;
+    // The iOS native player is libmpv but reports engine "html5" (it reuses
+    // the HTML chrome), so it must apply sub styles too.
+    if (engine !== "mpv" && !isMobileTauri()) return;
     if (!bridgeReady) return;
     if (!mediaReady) return;
     void applySubStyle(settings, { assNativeActive, imageNativeActive });

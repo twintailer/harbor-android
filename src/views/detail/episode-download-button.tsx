@@ -69,8 +69,12 @@ export function EpisodeDownloadButton({
         : "text-ink-subtle hover:bg-elevated hover:text-ink active:scale-90";
   const wrapperClass = isBar
     ? `group/dl relative flex shrink-0 items-center justify-center rounded-full border border-edge bg-canvas/80 transition-[transform,background-color,border-color] duration-200 hover:border-ink-subtle hover:bg-canvas/95 active:scale-[0.96] ${stateTone}`
-    : `group/dl relative flex shrink-0 items-center justify-center self-start rounded-full transition-[opacity,background-color,transform] duration-200 ease-out ${
-        persistent ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+    : `group/dl relative flex shrink-0 items-center justify-center self-center rounded-full transition-[opacity,background-color,transform] duration-200 ease-out sm:self-start ${
+        // Touch devices have no hover, so the download button must be visible
+        // by default on mobile; keep the hover-reveal only on sm+ (desktop).
+        persistent
+          ? "opacity-100"
+          : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
       } ${stateTone}`;
 
   const showProgress = downloading || paused;
