@@ -1,4 +1,4 @@
-﻿import { Check, Download, FlaskConical, Github, Link2, Loader2, Lock, RotateCw, Wrench } from "lucide-react";
+﻿import { Bug, Check, Download, FlaskConical, Github, Link2, Loader2, Lock, RotateCw, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import cornerSvg from "@/assets/corner.svg";
 import harborDiscord from "@/assets/harbor-discord.svg";
@@ -11,6 +11,7 @@ import {
   omdbBudget as readOmdbBudget,
 } from "@/lib/providers/omdb";
 import { useSettings } from "@/lib/settings";
+import { setMobileDebugEnabled } from "@/lib/mobile-debug";
 import { repairStremioLibrary, type RepairProgress, type RepairResult } from "@/lib/stremio-library-repair";
 import { findCorruptAnimeEntries, healCorruptAnimeEntries } from "@/lib/anime-cw-repair";
 import { clearResurfaceCache } from "@/lib/cw-resurface";
@@ -85,6 +86,15 @@ export function AdvancedPanel() {
       >
         <PrivacyRow />
       </Section>
+
+      {isMobileTauri() && (
+        <Section
+          title={t("Diagnostics")}
+          subtitle={t("Tools for chasing playback problems on the phone. Leave off for normal use.")}
+        >
+          <MobileDebugRow />
+        </Section>
+      )}
 
       {isDesktopShell && (
         <Section
@@ -231,6 +241,56 @@ function WebBuildBanner() {
         </div>
       </div>
     </section>
+  );
+}
+
+// Mobile only: the persisted player debug log ("LAST EXIT LOG", green monospace
+// overlay on launch). Ships OFF; this is the switch to arm it when we need a
+// freeze diagnosed. State lives in the synchronous localStorage flag (not the
+// settings store) because mobile-debug.ts must read it before hydration.
+function MobileDebugRow() {
+  const t = useT();
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem("harbor.debugOverlay") === "1";
+    } catch {
+      return false;
+    }
+  });
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-edge-soft bg-canvas/40 px-4 py-3.5">
+      <span
+        className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+          on ? "bg-accent/15 text-accent" : "bg-raised text-ink-subtle"
+        }`}
+      >
+        <Bug size={15} strokeWidth={2.2} />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="text-[14px] font-medium text-ink">{t("Player debug log")}</span>
+        <p className="text-[12.5px] leading-relaxed text-ink-subtle">
+          {t("Records playback steps and shows the last log as a green overlay on the next launch — useful only when reporting a player freeze. Off for normal viewing.")}
+        </p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        onClick={() => {
+          setMobileDebugEnabled(!on);
+          setOn(!on);
+        }}
+        className={`mt-1 flex h-6 w-11 shrink-0 items-center rounded-full px-0.5 transition-colors ${
+          on ? "bg-accent" : "bg-raised"
+        }`}
+      >
+        <span
+          className={`h-5 w-5 rounded-full bg-canvas shadow-sm transition-transform ${
+            on ? "translate-x-5 rtl:-translate-x-5" : "translate-x-0"
+          }`}
+        />
+      </button>
+    </div>
   );
 }
 

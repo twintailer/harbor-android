@@ -339,6 +339,12 @@ class NativePlayerPlugin: Plugin {
     guard let ctx = ctx else { return }
     mpv = ctx
 
+    // "fast" profile FIRST, as the baseline every later option overrides. Beyond
+    // what we already set manually it turns off gpu-next's correct-downscaling,
+    // linear-downscaling and sigmoid-upscaling — real per-frame GPU shader cost
+    // on every 4K→screen scale, and a major share of the phone-heat complaint.
+    setOpt("profile", "fast")
+
     var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(layer).toOpaque()))
     mpv_set_option(ctx, "wid", MPV_FORMAT_INT64, &wid)
     setOpt("vo", "gpu-next")
@@ -370,7 +376,13 @@ class NativePlayerPlugin: Plugin {
     setOpt("cscale", "bilinear")
     setOpt("dither", "no")
     setOpt("hdr-compute-peak", "no")  // avoid per-frame HDR peak analysis
-    setOpt("vd-lavc-threads", "0")    // let ffmpeg pick, don't over-thread
+    setOpt("interpolation", "no")     // never motion-interpolate on the phone
+    // Cap software-decode threads. hwdec covers the normal case, but content
+    // VideoToolbox can't do (AV1 on pre-A17, some 10-bit profiles) falls back
+    // to ffmpeg software decode, where "0" (auto) spawns core-count threads
+    // and turns the phone into a hand warmer. Four is enough for 1080p SW
+    // decode and bounds the worst case.
+    setOpt("vd-lavc-threads", "4")
     setOpt("video-rotate", "no")
     setOpt("keep-open", "yes")
     setOpt("subs-fallback", "yes")
@@ -399,7 +411,12 @@ class NativePlayerPlugin: Plugin {
   private func startPolling() {
     guard pollSource == nil else { return }
     let timer = DispatchSource.makeTimerSource(queue: mpvQueue)
-    timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+    // 0.5s, was 0.25s: every tick ends in a Tauri event → evaluateJavaScript →
+    // a WebContent wake-up + React state update. Halving the rate halves that
+    // steady CPU drip for the whole session (thermal complaint); the seekbar
+    // still updates twice a second, and seeks reflect optimistically in JS.
+    // Generous leeway lets the kernel coalesce the timer with other wake-ups.
+    timer.schedule(deadline: .now() + 0.5, repeating: 0.5, leeway: .milliseconds(100))
     timer.setEventHandler { [weak self] in self?.tick() }
     timer.resume()
     pollSource = timer

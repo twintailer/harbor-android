@@ -6,29 +6,36 @@
 // an overlay on the NEXT launch. The final line recorded before the freeze
 // pinpoints exactly which step blocked.
 //
-// Default: ON for mobile Tauri (this diagnostic build) so the persisted exit
-// log is captured without any manual setup. Force off with localStorage
-// "harbor.debugOverlay" = "0"; on desktop/web it stays off unless set to "1".
-
-import { isMobileTauri } from "./platform";
+// Default: OFF everywhere — the freeze class it was built to catch is fixed,
+// and the green launch overlay confused daily use. Re-enable via
+// Settings → Advanced → "Player debug log" (persists as localStorage
+// "harbor.debugOverlay" = "1", read synchronously here because this module
+// runs before the settings store is hydrated).
 
 const KEY = "harbor.exitLog";
+const FLAG_KEY = "harbor.debugOverlay";
 const LINES: string[] = [];
 let enabled: boolean | null = null;
 
-// On mobile Tauri the diagnostics default ON (explicit "0" disables); elsewhere
-// they stay OFF unless localStorage "harbor.debugOverlay" is "1".
 function isEnabled(): boolean {
   if (enabled !== null) return enabled;
   try {
-    const flag = localStorage.getItem("harbor.debugOverlay");
-    if (flag === "1") enabled = true;
-    else if (flag === "0") enabled = false;
-    else enabled = isMobileTauri();
+    enabled = localStorage.getItem(FLAG_KEY) === "1";
   } catch {
     enabled = false;
   }
   return enabled;
+}
+
+/** Settings toggle hook: flip the synchronous flag and apply immediately. */
+export function setMobileDebugEnabled(on: boolean): void {
+  enabled = on;
+  try {
+    localStorage.setItem(FLAG_KEY, on ? "1" : "0");
+    if (!on) localStorage.removeItem(KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Reset the buffer so the next sequence is isolated (call on back tap). */
