@@ -12,6 +12,7 @@ import {
   SkipForward,
   Tv,
 } from "lucide-react";
+import { isMobileTauri } from "@/lib/platform";
 import { realQualityLabel } from "@/lib/player/resolution-label";
 import type { PlayerCapabilities, PlayerSnapshot } from "@/lib/player/bridge";
 import type { Meta } from "@/lib/cinemeta";
@@ -224,6 +225,9 @@ export function RenderedStremioControl({
       );
     }
     case "play-pause":
+      // Touch shells drive playback from the centre cluster (see transport.tsx),
+      // so the bar must not repeat these three controls.
+      if (isMobileTauri()) return null;
       return (
         <Tooltip label={ctx.playing ? tr("Pause") : tr("Play")}>
           <StremioBtn onClick={ctx.onPlayPause} ariaLabel={ctx.playing ? tr("Pause") : tr("Play")}>
@@ -236,6 +240,7 @@ export function RenderedStremioControl({
         </Tooltip>
       );
     case "prev-episode":
+      if (isMobileTauri()) return null;
       if (!ctx.showEpisodeNav) return null;
       return (
         <Tooltip label={tr("Previous episode")}>
@@ -245,6 +250,7 @@ export function RenderedStremioControl({
         </Tooltip>
       );
     case "next-episode":
+      if (isMobileTauri()) return null;
       if (!ctx.showEpisodeNav) return null;
       return (
         <Tooltip label={tr("Next episode")}>

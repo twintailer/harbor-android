@@ -263,6 +263,9 @@ export function renderControl(id: PlayerControlId, ctx: ControlContext): ReactNo
       );
     }
     case "prev-episode": {
+      // Touch shells drive playback from the centre cluster (see transport.tsx),
+      // so the bar must not repeat these three controls.
+      if (isMobileTauri()) return null;
       if (ctx.tight || !ctx.showEpisodeNav) return null;
       const v = ctx.controlVariants?.["prev-episode"] ?? "auto";
       const iconOnly = v === "condensed" ? true : v === "full" ? false : ctx.mid;
@@ -281,6 +284,7 @@ export function renderControl(id: PlayerControlId, ctx: ControlContext): ReactNo
       return <SeekStepBtn direction="back" seconds={10} onSeekStep={ctx.onSeekStep} />;
     }
     case "play-pause": {
+      if (isMobileTauri()) return null;
       return (
         <Tooltip label={ctx.playing ? t("Pause") : t("Play")}>
           <button
@@ -304,6 +308,7 @@ export function renderControl(id: PlayerControlId, ctx: ControlContext): ReactNo
       return <SeekStepBtn direction="forward" seconds={10} onSeekStep={ctx.onSeekStep} />;
     }
     case "next-episode": {
+      if (isMobileTauri()) return null;
       if (ctx.tight || !ctx.showEpisodeNav) return null;
       const v = ctx.controlVariants?.["next-episode"] ?? "auto";
       const iconOnly = v === "condensed" ? true : v === "full" ? false : ctx.mid;

@@ -52,6 +52,8 @@ export type PlayerOverlayLayersProps = {
   pickAnother: () => void;
   pickAnotherOrGuide: () => void;
   playPauseToggle: () => void;
+  /** Tap/click on the video surface — chrome toggle on touch, play/pause on desktop. */
+  stageTap: () => void;
   toggleFullscreen: () => void;
   onVolumeWheel: (deltaY: number) => void;
   onVolumeFeedback: (volume: number, muted: boolean) => void;
@@ -211,7 +213,7 @@ export function PlayerOverlayLayers(p: PlayerOverlayLayersProps) {
       <DragClickStage
         drawMode={p.drawMode}
         pipMode={p.pipMode}
-        onClick={p.playPauseToggle}
+        onClick={p.stageTap}
         onDoubleClick={p.toggleFullscreen}
         onWheelVolume={p.onVolumeWheel}
       />

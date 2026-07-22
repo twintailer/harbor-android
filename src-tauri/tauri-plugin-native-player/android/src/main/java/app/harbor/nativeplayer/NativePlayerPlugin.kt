@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -21,7 +22,9 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -91,6 +94,9 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private var lastVolume = 1.0f
     private var currentUrl = ""
     private var subtitleConfigs = mutableListOf<MediaItem.SubtitleConfiguration>()
+    // Last subtitle style pushed from JS (mpv property names), replayed onto
+    // each new PlayerView so the look survives a player rebuild.
+    private val subProps = mutableMapOf<String, String>()
 
     override fun load(webView: WebView) {
         super.load(webView)
@@ -155,6 +161,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
         player = p
         playerView = view
+        applySubtitleStyle()   // replay whatever JS already pushed
         startTicker()
     }
 
@@ -399,12 +406,70 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
-    // mpv-specific styling knobs (sub-font-size etc.) have no ExoPlayer
-    // equivalent — accept and ignore so the shared JS path stays happy.
+    // The shared subtitle-style code speaks mpv property names. Translate the
+    // ones that have an ExoPlayer equivalent onto the SubtitleView; the rest
+    // (font family, line spacing, ASS margin knobs) are accepted and ignored.
     @Command
     fun setProperty(invoke: Invoke) {
-        invoke.parseArgs(SetPropArgs::class.java)
-        invoke.resolve()
+        val args = invoke.parseArgs(SetPropArgs::class.java)
+        activity.runOnUiThread {
+            subProps[args.name] = args.value
+            applySubtitleStyle()
+            invoke.resolve()
+        }
+    }
+
+    /// mpv colors arrive as "#AARRGGBB" (see mpvColor in sub-style.ts).
+    private fun mpvColor(value: String?, fallback: Int): Int {
+        val hex = value?.removePrefix("#") ?: return fallback
+        return try {
+            when (hex.length) {
+                8 -> {
+                    val a = hex.substring(0, 2).toInt(16)
+                    val r = hex.substring(2, 4).toInt(16)
+                    val g = hex.substring(4, 6).toInt(16)
+                    val b = hex.substring(6, 8).toInt(16)
+                    Color.argb(a, r, g, b)
+                }
+                6 -> Color.parseColor("#$hex")
+                else -> fallback
+            }
+        } catch (e: Exception) {
+            fallback
+        }
+    }
+
+    private fun applySubtitleStyle() {
+        val view = playerView?.subtitleView ?: return
+        val fg = mpvColor(subProps["sub-color"], Color.WHITE)
+        val bg = mpvColor(subProps["sub-back-color"], Color.TRANSPARENT)
+        val edgeColor = mpvColor(subProps["sub-border-color"], Color.BLACK)
+        val borderSize = subProps["sub-border-size"]?.toFloatOrNull() ?: 0f
+        val shadowOffset = subProps["sub-shadow-offset"]?.toFloatOrNull() ?: 0f
+        val edgeType = when {
+            borderSize > 0f -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
+            shadowOffset > 0f -> CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
+            else -> CaptionStyleCompat.EDGE_TYPE_NONE
+        }
+        val bold = subProps["sub-bold"] == "yes"
+        val typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+
+        view.setStyle(
+            CaptionStyleCompat(fg, bg, Color.TRANSPARENT, edgeType, edgeColor, typeface)
+        )
+        // Our style must win over the file's own ASS styling unless the user
+        // picked "keep original" (sub-ass-override = no).
+        view.setApplyEmbeddedStyles(subProps["sub-ass-override"] == "no")
+
+        // sub-scale is 1.0 at the app's 32px baseline; SubtitleView sizes text
+        // as a fraction of view height (0.0533 is its default).
+        val scale = subProps["sub-scale"]?.toFloatOrNull() ?: 1f
+        view.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * scale)
+
+        // sub-margin-y is a 0..100 distance from the bottom in the app's model.
+        subProps["sub-margin-y"]?.toFloatOrNull()?.let { margin ->
+            view.setBottomPaddingFraction((margin / 100f).coerceIn(0f, 0.5f))
+        }
     }
 
     @Command
