@@ -1,0 +1,113 @@
+name: android-build
+
+# Builds a SIGNED Android APK of Harbor (signed with a throwaway CI keystore —
+# Android refuses to install unsigned APKs, unlike iOS sideloading).
+# Trigger from the Actions tab or:  gh workflow run android-build.yml
+# Install: transfer the APK to the phone and open it (allow "unknown sources").
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Android (aarch64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            harbor-core
+            src-tauri
+          key: android
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Android NDK env
+        run: |
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "NDK at: $ANDROID_NDK_LATEST_HOME"
+
+      - name: Initialize Android project
+        run: pnpm tauri android init --ci
+
+      - name: Generate app icons (real Harbor icon into the Android mipmaps)
+        run: pnpm tauri icon src-tauri/icons/icon.png
+
+      - name: Patch AndroidManifest (cleartext http for debrid/local streams)
+        run: |
+          M=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          python3 - "$M" <<'EOF'
+          import re, sys
+          p = sys.argv[1]
+          s = open(p).read()
+          if "usesCleartextTraffic" not in s:
+              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+          open(p, "w").write(s)
+          print("patched", p)
+          EOF
+
+      - name: Build APK (release, aarch64)
+        run: pnpm tauri android build --apk --target aarch64
+
+      - name: Sign APK (throwaway CI keystore)
+        run: |
+          set -e
+          APK=$(find src-tauri/gen/android -name '*-unsigned.apk' -path '*release*' | head -1)
+          if [ -z "$APK" ]; then
+            # Some tauri versions emit an already-named release apk instead.
+            APK=$(find src-tauri/gen/android -name '*.apk' -path '*release*' | head -1)
+          fi
+          echo "APK: $APK"
+          test -n "$APK"
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          echo "build-tools: $BT"
+          keytool -genkeypair -v -keystore harbor.keystore -alias harbor \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass harbor123 -keypass harbor123 \
+            -dname "CN=Harbor, OU=Harbor, O=Harbor, C=DE"
+          mkdir -p dist
+          "$BT/zipalign" -f 4 "$APK" dist/aligned.apk
+          "$BT/apksigner" sign --ks harbor.keystore \
+            --ks-pass pass:harbor123 --key-pass pass:harbor123 \
+            --out "dist/Harbor_android_signed.apk" dist/aligned.apk
+          rm dist/aligned.apk
+          "$BT/apksigner" verify --print-certs "dist/Harbor_android_signed.apk" | head -5
+          ls -la dist
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbor-android
+          path: dist/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            src-tauri/gen/android/app/build/outputs/logs/**
+          if-no-files-found: ignore

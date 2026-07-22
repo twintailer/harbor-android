@@ -25,6 +25,7 @@ const COMMANDS: &[&str] = &[
 fn main() {
     tauri_plugin::Builder::new(COMMANDS)
         .ios_path("ios")
+        .android_path("android")
         .build();
 
     // libmpv is linked into the app by Xcode (MPVKit SwiftPM package), not by

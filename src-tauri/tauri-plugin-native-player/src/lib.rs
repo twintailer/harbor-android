@@ -9,13 +9,13 @@ use tauri::{
     Runtime,
 };
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 use tauri::{plugin::PluginHandle, AppHandle, Manager};
 
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_native_player);
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 struct NativePlayer<R: Runtime>(PluginHandle<R>);
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct SubtitleArgs {
 
 macro_rules! proxy {
     ($app:ident, $method:literal, $payload:expr) => {{
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             let handle = &$app.state::<NativePlayer<R>>().0;
             handle
@@ -79,7 +79,7 @@ macro_rules! proxy {
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             let _ = &$app;
             let _ = $payload;
@@ -90,14 +90,14 @@ macro_rules! proxy {
 
 #[tauri::command]
 async fn probe<R: Runtime>(app: tauri::AppHandle<R>) -> Result<ProbeResponse, String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         app.state::<NativePlayer<R>>()
             .0
             .run_mobile_plugin::<ProbeResponse>("probe", ())
             .map_err(|e| e.to_string())
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let _ = &app;
         Ok(ProbeResponse { available: false })
@@ -123,7 +123,7 @@ async fn pause<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
 async fn stop<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     // Fire and forget: even if VLC's stop takes long (slow input teardown),
     // it must never wedge an async-runtime worker or delay the UI exit.
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let handle = app.state::<NativePlayer<R>>().0.clone();
         std::thread::spawn(move || {
@@ -131,7 +131,7 @@ async fn stop<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
         });
         Ok(())
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let _ = &app;
         Err("stop is not supported on this platform".into())
@@ -220,14 +220,14 @@ async fn main_ping<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
 /// killed the native main thread or the WebContent process.
 #[tauri::command]
 async fn exit_probe<R: Runtime>(app: tauri::AppHandle<R>) -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         app.state::<NativePlayer<R>>()
             .0
             .run_mobile_plugin::<serde_json::Value>("exitProbe", ())
             .map_err(|e| e.to_string())
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let _ = &app;
         Ok(serde_json::json!({ "text": "" }))
@@ -260,6 +260,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             #[cfg(target_os = "ios")]
             {
                 let handle: PluginHandle<R> = _api.register_ios_plugin(init_plugin_native_player)?;
+                let app: &AppHandle<R> = _app;
+                app.manage(NativePlayer(handle));
+            }
+            #[cfg(target_os = "android")]
+            {
+                let handle: PluginHandle<R> =
+                    _api.register_android_plugin("app.harbor.nativeplayer", "NativePlayerPlugin")?;
                 let app: &AppHandle<R> = _app;
                 app.manage(NativePlayer(handle));
             }
