@@ -1,0 +1,80 @@
+
+    // ---- Harbor additions (appended by scripts/patch-main-activity.py) ----
+    // Nothing above this point is ours: the Tauri CLI's own onCreate (including
+    // its enableEdgeToEdge() call before super.onCreate) is left untouched.
+
+    /**
+     * Immersive full screen: hide the status bar and, on tablets especially,
+     * the navigation/task bar. A swipe from the edge reveals them transiently.
+     * Applied from onWindowFocusChanged so we never reorder the CLI's onCreate.
+     */
+    @Suppress("DEPRECATION")
+    private fun harborApplyImmersive() {
+        // Cosmetic feature: never let an OEM window quirk take the app down.
+        // Worst case the system bars stay visible.
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode =
+                        android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let { c ->
+                    c.hide(android.view.WindowInsets.Type.systemBars())
+                    c.systemBarsBehavior =
+                        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            } else {
+                window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    )
+            }
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Bars return after a reveal swipe or a trip to recents/the shade;
+        // re-hide them whenever we regain focus.
+        if (hasFocus) harborApplyImmersive()
+    }
+
+    private fun harborFindWebView(v: View = window.decorView): WebView? {
+        if (v is WebView) return v
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                harborFindWebView(v.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /**
+     * System back walks the web app's own view stack instead of quitting.
+     * The page answers "1" when it consumed the press (closed an overlay or
+     * popped a view); anything else means there is nothing left to go back to,
+     * and we background the app the way Android would.
+     */
+    @Suppress("DEPRECATION", "MissingSuperCall")
+    override fun onBackPressed() {
+        val wv = runCatching { harborFindWebView() }.getOrNull()
+        if (wv == null) {
+            moveTaskToBack(true)
+            return
+        }
+        val js =
+            "(function(){try{return window.__harborAndroidBack&&window.__harborAndroidBack()?'1':'0'}" +
+                "catch(e){return '0'}})()"
+        runCatching {
+            wv.evaluateJavascript(js) { result ->
+                val handled = result != null && result.replace("\"", "").trim() == "1"
+                if (!handled) runOnUiThread { moveTaskToBack(true) }
+            }
+        }.onFailure { moveTaskToBack(true) }
+    }

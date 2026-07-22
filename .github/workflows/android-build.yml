@@ -73,20 +73,25 @@ jobs:
           EOF
 
       # Immersive full screen + Android-native back navigation. gen/android is
-      # regenerated every build, so render android/MainActivity.kt.tmpl over the
-      # generated activity, keeping its package, base class and imports.
+      # regenerated every build, so our members are appended to the generated
+      # activity. Strictly additive — the CLI's own onCreate (which calls
+      # enableEdgeToEdge before super) must survive untouched.
       - name: Patch MainActivity (immersive + back navigation)
         run: |
           A=$(find src-tauri/gen/android/app/src/main/java -name MainActivity.kt | head -1)
           echo "MainActivity: $A"
           test -n "$A"
           echo "----- generated -----"; cat "$A"; echo "---------------------"
-          python3 scripts/patch-main-activity.py "$A" android/MainActivity.kt.tmpl
+          python3 scripts/patch-main-activity.py "$A" android/MainActivity-harbor.kt.snippet
 
       - name: Build APK (release, aarch64)
         run: pnpm tauri android build --apk --target aarch64
 
-      - name: Sign APK (throwaway CI keystore)
+      # Signed with the FIXED key committed in android/signing. Android only
+      # allows an update when the new APK carries the same signature, so this
+      # key must never be regenerated — a fresh one per build (the original
+      # mistake) forced an uninstall before every update.
+      - name: Sign APK (stable Harbor key)
         run: |
           set -e
           APK=$(find src-tauri/gen/android -name '*-unsigned.apk' -path '*release*' | head -1)
@@ -98,17 +103,13 @@ jobs:
           test -n "$APK"
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           echo "build-tools: $BT"
-          keytool -genkeypair -v -keystore harbor.keystore -alias harbor \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass harbor123 -keypass harbor123 \
-            -dname "CN=Harbor, OU=Harbor, O=Harbor, C=DE"
           mkdir -p dist
           "$BT/zipalign" -f 4 "$APK" dist/aligned.apk
-          "$BT/apksigner" sign --ks harbor.keystore \
-            --ks-pass pass:harbor123 --key-pass pass:harbor123 \
+          "$BT/apksigner" sign \
+            --key android/signing/key.pk8 --cert android/signing/cert.x509.pem \
             --out "dist/Harbor_android_signed.apk" dist/aligned.apk
           rm dist/aligned.apk
-          "$BT/apksigner" verify --print-certs "dist/Harbor_android_signed.apk" | head -5
+          "$BT/apksigner" verify --print-certs "dist/Harbor_android_signed.apk"
           ls -la dist
 
       - name: Upload APK artifact
