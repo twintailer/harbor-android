@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { getSeekHovering, subscribeSeekHovering } from "@/lib/player/playback-clock";
-import { CHROME_HIDE_MS_PAUSED, CHROME_HIDE_MS_PLAYING, CHROME_HIDE_MS_RESUME } from "../player-utils";
+import { isMobileTauri } from "@/lib/platform";
+import {
+  CHROME_HIDE_MS_PAUSED,
+  CHROME_HIDE_MS_PLAYING,
+  CHROME_HIDE_MS_PLAYING_TOUCH,
+  CHROME_HIDE_MS_RESUME,
+} from "../player-utils";
 
 const UI_SCALE_ACTIVITY_EVENT = "harbor:ui-scale-activity";
 const UI_SCALE_RESIZE_HOLD_MS = 700;
@@ -32,7 +38,8 @@ export function useChromeVisibility(params: {
     setChromeHidden(pipMode);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     if (resizingUiRef.current || anyMenuOpenRef.current || getSeekHovering()) return;
-    let wait = playing && !drawMode ? CHROME_HIDE_MS_PLAYING : CHROME_HIDE_MS_PAUSED;
+    const playingWait = isMobileTauri() ? CHROME_HIDE_MS_PLAYING_TOUCH : CHROME_HIDE_MS_PLAYING;
+    let wait = playing && !drawMode ? playingWait : CHROME_HIDE_MS_PAUSED;
     if (resumeHideRef.current) {
       resumeHideRef.current = false;
       wait = CHROME_HIDE_MS_RESUME;

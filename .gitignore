@@ -47,3 +47,7 @@ local_docs/
 
 # Competitor reference source, not part of Harbor
 /Nuvio/
+
+# Never commit build output downloaded from CI
+*.apk
+*.ipa

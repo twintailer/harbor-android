@@ -444,22 +444,28 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val fg = mpvColor(subProps["sub-color"], Color.WHITE)
         val bg = mpvColor(subProps["sub-back-color"], Color.TRANSPARENT)
         val edgeColor = mpvColor(subProps["sub-border-color"], Color.BLACK)
-        val borderSize = subProps["sub-border-size"]?.toFloatOrNull() ?: 0f
-        val shadowOffset = subProps["sub-shadow-offset"]?.toFloatOrNull() ?: 0f
-        val edgeType = when {
-            borderSize > 0f -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
-            shadowOffset > 0f -> CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
-            else -> CaptionStyleCompat.EDGE_TYPE_NONE
-        }
-        val bold = subProps["sub-bold"] == "yes"
+        val isBox = Color.alpha(bg) > 0
+        // Desktop keeps the file's own ASS styling by default (override = "no"),
+        // which libass draws as bold white text with a heavy black outline.
+        // ExoPlayer cannot reproduce ASS styling, so approximate that look
+        // instead of falling through to bare text.
+        val keepOriginal = subProps["sub-ass-override"].let { it == null || it == "no" }
+        val bold = subProps["sub-bold"] == "yes" || keepOriginal
+        // ExoPlayer's DROP_SHADOW is barely visible at phone sizes and reads as
+        // "no styling at all" against bright scenes; OUTLINE is both the legible
+        // choice and what the desktop render looks like. Box styling still wins
+        // when the user asked for a background.
+        val edgeType =
+            if (isBox) CaptionStyleCompat.EDGE_TYPE_NONE
+            else CaptionStyleCompat.EDGE_TYPE_OUTLINE
         val typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
 
         view.setStyle(
             CaptionStyleCompat(fg, bg, Color.TRANSPARENT, edgeType, edgeColor, typeface)
         )
-        // Our style must win over the file's own ASS styling unless the user
-        // picked "keep original" (sub-ass-override = no).
-        view.setApplyEmbeddedStyles(subProps["sub-ass-override"] == "no")
+        // Never let the embedded styling through: ExoPlayer renders only a
+        // fraction of it, which is what made subtitles ignore the settings.
+        view.setApplyEmbeddedStyles(false)
 
         // sub-scale is 1.0 at the app's 32px baseline; SubtitleView sizes text
         // as a fraction of view height (0.0533 is its default).

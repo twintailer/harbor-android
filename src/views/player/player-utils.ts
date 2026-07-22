@@ -20,6 +20,10 @@ export const STUCK_AUTORETRY_MS = 18_000;
 export const BLACK_SCREEN_GRACE_MS = 6_000;
 export const MAX_AUTORETRY_ATTEMPTS = 5;
 export const CHROME_HIDE_MS_PLAYING = 1800;
+// Touch shells: a tap is a deliberate "show me the controls", and there is no
+// pointer to keep them alive by moving it — 1.8s felt like they vanished
+// instantly. Give a thumb time to travel to the centre button.
+export const CHROME_HIDE_MS_PLAYING_TOUCH = 4000;
 export const CHROME_HIDE_MS_PAUSED = 4500;
 export const CHROME_HIDE_MS_RESUME = 1000;
 
