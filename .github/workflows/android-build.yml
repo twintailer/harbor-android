@@ -63,9 +63,25 @@ jobs:
           s = open(p).read()
           if "usesCleartextTraffic" not in s:
               s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+          # Keep the legacy back callback: MainActivity.onBackPressed() is how we
+          # route system back into the web app's view stack, and Android 13+
+          # predictive back would bypass it.
+          if "enableOnBackInvokedCallback" not in s:
+              s = s.replace("<application", '<application android:enableOnBackInvokedCallback="false"', 1)
           open(p, "w").write(s)
           print("patched", p)
           EOF
+
+      # Immersive full screen + Android-native back navigation. gen/android is
+      # regenerated every build, so render android/MainActivity.kt.tmpl over the
+      # generated activity, keeping its package, base class and imports.
+      - name: Patch MainActivity (immersive + back navigation)
+        run: |
+          A=$(find src-tauri/gen/android/app/src/main/java -name MainActivity.kt | head -1)
+          echo "MainActivity: $A"
+          test -n "$A"
+          echo "----- generated -----"; cat "$A"; echo "---------------------"
+          python3 scripts/patch-main-activity.py "$A" android/MainActivity.kt.tmpl
 
       - name: Build APK (release, aarch64)
         run: pnpm tauri android build --apk --target aarch64

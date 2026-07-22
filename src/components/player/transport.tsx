@@ -1,4 +1,5 @@
-import { Settings2 } from "lucide-react";
+import { Pause, Play, Settings2, SkipBack, SkipForward } from "lucide-react";
+import { isMobileTauri } from "@/lib/platform";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { PlayerCapabilities, PlayerSnapshot } from "@/lib/player/bridge";
 import type { Meta } from "@/lib/cinemeta";
@@ -406,6 +407,59 @@ export function Transport({
   return (
     <>
       <SongIdToast />
+      {/* Phone/tablet: the primary transport sits in the MIDDLE of the screen
+          (thumb-reachable in landscape), with the episode jumps flanking it.
+          Tapping the video only reveals the chrome — playback toggles solely
+          by hitting this button, so a stray tap can never pause the film. */}
+      {isMobileTauri() && !pipMode && !drawMode && (
+        <div
+          dir="ltr"
+          className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-8 transition-opacity duration-300 ${
+            visible ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {showEpisodeNav && (
+            <button
+              type="button"
+              onClick={hasPrevEp ? onPrevEp : undefined}
+              disabled={!hasPrevEp}
+              aria-label={t("Previous episode")}
+              className={`pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full bg-black/45 backdrop-blur-sm transition-colors ${
+                hasPrevEp ? "text-white active:bg-black/70" : "text-white/25"
+              } ${visible ? "" : "pointer-events-none"}`}
+            >
+              <SkipBack size={26} strokeWidth={2.2} fill="currentColor" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onPlayPause}
+            aria-label={snap.status === "playing" ? t("Pause") : t("Play")}
+            className={`pointer-events-auto flex h-20 w-20 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-transform active:scale-95 ${
+              visible ? "" : "pointer-events-none"
+            }`}
+          >
+            {snap.status === "playing" ? (
+              <Pause size={38} strokeWidth={2} fill="currentColor" />
+            ) : (
+              <Play size={38} strokeWidth={2} fill="currentColor" className="ms-1" />
+            )}
+          </button>
+          {showEpisodeNav && (
+            <button
+              type="button"
+              onClick={hasNextEp ? onNextEp : undefined}
+              disabled={!hasNextEp}
+              aria-label={t("Next episode")}
+              className={`pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full bg-black/45 backdrop-blur-sm transition-colors ${
+                hasNextEp ? "text-white active:bg-black/70" : "text-white/25"
+              } ${visible ? "" : "pointer-events-none"}`}
+            >
+              <SkipForward size={26} strokeWidth={2.2} fill="currentColor" />
+            </button>
+          )}
+        </div>
+      )}
       <div
         data-tauri-drag-region={fullscreen ? undefined : ""}
         className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between bg-gradient-to-b from-black/55 via-black/15 to-transparent px-7 pt-4 pb-8 transition-opacity duration-300 ${

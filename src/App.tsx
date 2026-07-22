@@ -477,6 +477,27 @@ function Shell() {
   playerOpenRef.current = !!player;
   const canGoBackRef = useRef(canGoBack);
   canGoBackRef.current = canGoBack;
+  // Android's system back (gesture or button). MainActivity calls this and
+  // only leaves the app when it returns false, so back walks the view stack
+  // like every other Android app instead of quitting outright.
+  useEffect(() => {
+    if (!isMobileTauri()) return;
+    const w = window as unknown as { __harborAndroidBack?: () => boolean };
+    w.__harborAndroidBack = () => {
+      // Overlays (search, modals, menus) claim the gesture first by cancelling.
+      const localBack = new Event("harbor:local-back", { cancelable: true });
+      if (!window.dispatchEvent(localBack)) return true;
+      if (canGoBackRef.current) {
+        goBack();
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      delete w.__harborAndroidBack;
+    };
+  }, [goBack]);
+
   useEffect(() => {
     if (!isMobileTauri()) return;
     let startX = 0;

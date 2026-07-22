@@ -47,6 +47,15 @@ export function useChromeVisibility(params: {
     resumeHideRef.current = true;
   }, []);
 
+  /// Dismiss the chrome right now (touch shells: a second tap on the video).
+  /// Menus keep it up, otherwise a tap would strand an open panel.
+  const hideChrome = useCallback(() => {
+    if (anyMenuOpenRef.current) return;
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    setChromeVisible(false);
+    setChromeHidden(true);
+  }, [setChromeHidden]);
+
   useEffect(() => {
     const playingChanged = prevPlayingRef.current !== playing;
     prevPlayingRef.current = playing;
@@ -158,6 +167,7 @@ export function useChromeVisibility(params: {
     chromeVisible,
     wakeChrome,
     hideForResume,
+    hideChrome,
     anyMenuOpen,
     setAnyMenuOpen,
     cursorStyle,

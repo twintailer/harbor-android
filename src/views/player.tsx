@@ -242,7 +242,7 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     sendDraw,
   });
 
-  const { chromeVisible, wakeChrome, hideForResume, setAnyMenuOpen, cursorStyle } = useChromeVisibility({
+  const { chromeVisible, wakeChrome, hideForResume, hideChrome, setAnyMenuOpen, cursorStyle } = useChromeVisibility({
     playing,
     drawMode,
     pipMode,
@@ -943,6 +943,14 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
         onClick={(e) => {
           if (e.target !== e.currentTarget) return;
           if (drawMode || pipMode) return;
+          // Touch shells: a tap only summons the controls (and a second tap
+          // dismisses them). Playback is toggled exclusively by the centre
+          // button, so brushing the screen can't pause the film.
+          if (isMobileTauri()) {
+            if (showChrome) hideChrome();
+            else wakeChrome();
+            return;
+          }
           const resuming = snap.status !== "playing";
           playPauseToggle();
           if (resuming) hideForResume();
