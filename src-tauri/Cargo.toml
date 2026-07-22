@@ -26,7 +26,10 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 axum = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["native-tls", "stream", "multipart", "json", "gzip"] }
+# TLS backend is chosen per target below: native-tls everywhere (system trust
+# store — Schannel/Security.framework/OpenSSL) except Android, where native-tls
+# means openssl-sys and there is no OpenSSL to link against in the NDK.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "multipart", "json", "gzip"] }
 flate2 = "1"
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"
@@ -44,6 +47,16 @@ realfft = "3"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-native-player = { path = "tauri-plugin-native-player" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-native-player = { path = "tauri-plugin-native-player" }
+# rustls instead of native-tls: openssl-sys has no OpenSSL to find in the NDK
+# sysroot. rustls ships its own TLS stack, so nothing native is needed.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# Everything except Android keeps the system TLS stack.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
 
 # Desktop-only dependencies: libmpv rendering, updater, tray/window helpers and
 # Discord IPC do not exist on iOS/Android.

@@ -23,7 +23,7 @@ pub fn run() {
             stream_proxy::ProxyState::placeholder()
         });
     let builder = tauri::Builder::default();
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let builder = builder.plugin(tauri_plugin_native_player::init());
     builder
         .plugin(tauri_plugin_opener::init())
