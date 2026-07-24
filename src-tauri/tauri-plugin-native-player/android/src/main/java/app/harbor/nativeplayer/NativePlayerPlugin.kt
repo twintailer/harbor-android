@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -87,6 +88,13 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private var mpvReady = false
     private var webView: WebView? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    // mpv creation/initialization runs here, never on the UI thread: when it
+    // blocked (and it did), the whole plugin call stalled, the JS promise never
+    // settled and nothing could be reported — the player just sat on
+    // "connecting". Off the UI thread the app stays responsive and the ticker
+    // keeps delivering diagnostics.
+    private val mpvThread = HandlerThread("harbor-mpv").apply { start() }
+    private val mpvHandler = Handler(mpvThread.looper)
     private var ticker: Runnable? = null
     private var lastVolume = 100
     private var lastTracksSignature = ""
@@ -179,16 +187,14 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         sv.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceReady = true
+                debug("surface: created")
                 if (!mpvReady) return
-                mpv?.attachSurface(holder.surface)
-                mpv?.setOptionString("force-window", "yes")
+                attachSurfaceIfReady()
                 val queued = pendingLoad
                 if (queued != null) {
                     pendingLoad = null
                     debug("surface ready → loading")
                     doLoad(queued.first, queued.second)
-                } else {
-                    mpv?.setPropertyString("vo", VIDEO_OUTPUT)
                 }
             }
 
@@ -231,16 +237,22 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         return dir
     }
 
+    /**
+     * Runs on mpvThread — must not touch views. Each step is logged so a hang
+     * shows up as the last line in the debug log instead of silence.
+     */
     private fun ensureMpv() {
         if (mpvReady) return
-        ensureView()
+        debug("mpv: create")
         mpv = MPVLib.create(activity)
         if (mpv == null) {
             debug("mpv: create failed")
             return
         }
+        debug("mpv: created")
 
         val configDir = prepareConfigDir()
+        debug("mpv: options")
         mpv?.setOptionString("config", "yes")
         mpv?.setOptionString("config-dir", configDir.path)
 
@@ -276,35 +288,47 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
         )
 
+        debug("mpv: init")
         mpv?.init()
+        debug("mpv: init done")
         mpvReady = true
         // No window yet — force-window stays off until a surface arrives,
         // otherwise mpv tries to create one and stalls.
         mpv?.setOptionString("force-window", "no")
 
-        surfaceView?.holder?.surface?.takeIf { surfaceReady }?.let {
-            mpv?.attachSurface(it)
-            mpv?.setOptionString("force-window", "yes")
-            mpv?.setPropertyString("vo", VIDEO_OUTPUT)
-        }
         // Replay any style the web side pushed before the core existed.
         pendingProps.forEach { (k, v) -> runCatching { mpv?.setPropertyString(k, v) } }
         pendingProps.clear()
-        startTicker()
+    }
+
+    /** Main thread: hand mpv the surface once both it and the core exist. */
+    private fun attachSurfaceIfReady() {
+        if (!mpvReady || !surfaceReady) return
+        val surface = surfaceView?.holder?.surface ?: return
+        mpv?.attachSurface(surface)
+        mpv?.setOptionString("force-window", "yes")
+        mpv?.setPropertyString("vo", VIDEO_OUTPUT)
+        debug("mpv: surface attached")
     }
 
     // MARK: - polling
 
+    /**
+     * Polls on mpvThread: reading properties from a stalled core blocks, and on
+     * the UI thread that freezes the app (the lesson the iOS plugin records as
+     * "the main thread must never call into mpv").
+     */
     private fun startTicker() {
         if (ticker != null) return
         val r = object : Runnable {
             override fun run() {
+                mainHandler.post { flushDebug() }
                 if (mpvReady) tick()
-                mainHandler.postDelayed(this, 500)
+                mpvHandler.postDelayed(this, 500)
             }
         }
         ticker = r
-        mainHandler.postDelayed(r, 500)
+        mpvHandler.postDelayed(r, 500)
     }
 
     private fun dbl(name: String): Double = runCatching { mpv?.getPropertyDouble(name) }.getOrNull() ?: 0.0
@@ -341,7 +365,9 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
             lastTracksSignature = sig
             emitStatus(status, cache, dur)
         }
-        surfaceView?.keepScreenOn = status == "playing" || status == "loading"
+        // View touch must be on the UI thread (tick runs on mpvThread).
+        val awake = status == "playing" || status == "loading"
+        mainHandler.post { surfaceView?.keepScreenOn = awake }
     }
 
     private fun emitStatus(status: String, buffering: Boolean, dur: Double) {
@@ -375,10 +401,34 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         trigger("status", data)
     }
 
+    /**
+     * The web side attaches its "debug" listener asynchronously, so anything
+     * emitted in the first moments of a load is dropped — which is exactly the
+     * window where setup failures happen. Buffer until the first tick (the
+     * listener is up by then) and flush in order.
+     */
+    private val debugBuffer = mutableListOf<String>()
+    private var debugListenerLikelyUp = false
+
+    /** Callable from any thread; all buffer access stays on the main thread. */
     private fun debug(msg: String) {
-        val data = JSObject()
-        data.put("msg", msg)
-        trigger("debug", data)
+        mainHandler.post {
+            if (!debugListenerLikelyUp) {
+                if (debugBuffer.size < 60) debugBuffer.add(msg)
+                return@post
+            }
+            val data = JSObject()
+            data.put("msg", msg)
+            trigger("debug", data)
+        }
+    }
+
+    private fun flushDebug() {
+        if (debugListenerLikelyUp) return
+        debugListenerLikelyUp = true
+        val pending = debugBuffer.toList()
+        debugBuffer.clear()
+        pending.forEach { debug(it) }
     }
 
     // MARK: - commands
@@ -393,44 +443,60 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     /** Issue the actual loadfile. Only call once a surface is attached. */
     private fun doLoad(url: String, startAtSec: Double) {
         lastTracksSignature = ""
-        if (startAtSec > 0) {
-            mpv?.command(arrayOf("loadfile", url, "replace", "start=$startAtSec"))
-        } else {
-            mpv?.command(arrayOf("loadfile", url, "replace"))
+        // Off the UI thread: loadfile opens the stream, which can block.
+        mpvHandler.post {
+            if (startAtSec > 0) {
+                mpv?.command(arrayOf("loadfile", url, "replace", "start=$startAtSec"))
+            } else {
+                mpv?.command(arrayOf("loadfile", url, "replace"))
+            }
+            mpv?.setPropertyBoolean("pause", false)
+            debug("loadfile issued")
         }
-        mpv?.setPropertyBoolean("pause", false)
     }
 
     @Command
     fun load(invoke: Invoke) {
         val args = invoke.parseArgs(LoadArgs::class.java)
+        val start = args.startAtSec ?: 0.0
+        // Settle the bridge call NOW. Previously resolve() sat behind the whole
+        // mpv setup, so a slow or blocking init left the JS promise pending and
+        // the player stuck on "connecting" with nothing reported.
+        invoke.resolve()
+        debug("load: ${args.url.take(96)}")
+
         activity.runOnUiThread {
-            debug("load: ${args.url.take(96)}")
-            runCatching { ensureMpv() }.onFailure { fail("mpv init threw: ${it.message}") }
-            if (!mpvReady) {
-                fail("mpv unavailable")
-                invoke.resolve()
-                return@runOnUiThread
-            }
-            // Showing the view is what makes Android create the surface; that
-            // arrives asynchronously in surfaceCreated. Loading before then
-            // leaves mpv waiting for a window forever, so queue it if needed.
-            surfaceView?.visibility = View.VISIBLE
-            val start = args.startAtSec ?: 0.0
+            // Start polling early: it flushes buffered debug lines and drives
+            // the watchdog even if mpv never comes up.
+            startTicker()
             armWatchdog()
-            if (surfaceReady) {
-                doLoad(args.url, start)
-            } else {
-                debug("load: waiting for surface")
-                pendingLoad = args.url to start
+            ensureView()
+            // Showing the view is what makes Android create the surface; it
+            // arrives asynchronously in surfaceCreated.
+            surfaceView?.visibility = View.VISIBLE
+        }
+
+        mpvHandler.post {
+            runCatching { ensureMpv() }.onFailure { fail("mpv init threw: ${it.message}") }
+            mainHandler.post {
+                if (!mpvReady) {
+                    fail("mpv unavailable")
+                    return@post
+                }
+                attachSurfaceIfReady()
+                if (surfaceReady) {
+                    doLoad(args.url, start)
+                } else {
+                    debug("load: waiting for surface")
+                    pendingLoad = args.url to start
+                }
             }
-            invoke.resolve()
         }
     }
 
     @Command
     fun play(invoke: Invoke) {
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.setPropertyBoolean("pause", false)
             invoke.resolve()
         }
@@ -438,7 +504,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun pause(invoke: Invoke) {
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.setPropertyBoolean("pause", true)
             invoke.resolve()
         }
@@ -446,29 +512,33 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun stop(invoke: Invoke) {
+        // Resolve up front: mpv's stop can block on a stalled demuxer, and the
+        // UI must never wait on it to leave the player.
+        invoke.resolve()
+        debug("stop: begin")
         activity.runOnUiThread {
-            debug("stop: begin")
             // Drop a queued load, else closing before the surface arrived would
             // start the old stream afterwards.
             pendingLoad = null
             watchdog?.let { mainHandler.removeCallbacks(it) }
             watchdog = null
+            surfaceView?.visibility = View.GONE
+            surfaceView?.keepScreenOn = false
+        }
+        mpvHandler.post {
+            lastTracksSignature = ""
             if (mpvReady) {
                 mpv?.setPropertyBoolean("pause", true)
                 mpv?.command(arrayOf("stop"))
             }
-            surfaceView?.visibility = View.GONE
-            surfaceView?.keepScreenOn = false
-            lastTracksSignature = ""
             debug("stop: end")
-            invoke.resolve()
         }
     }
 
     @Command
     fun seek(invoke: Invoke) {
         val args = invoke.parseArgs(SeekArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.command(arrayOf("seek", args.sec.toString(), "absolute"))
             invoke.resolve()
         }
@@ -477,7 +547,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setVolume(invoke: Invoke) {
         val args = invoke.parseArgs(VolumeArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             // JS sends 0..1 (html5 semantics) or 0..100 (mpv semantics).
             val v = if (args.volume <= 1.5) args.volume * 100 else args.volume
             lastVolume = v.toInt().coerceIn(0, 100)
@@ -489,7 +559,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setMuted(invoke: Invoke) {
         val args = invoke.parseArgs(MutedArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.setPropertyBoolean("mute", args.muted)
             invoke.resolve()
         }
@@ -498,7 +568,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setRate(invoke: Invoke) {
         val args = invoke.parseArgs(RateArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.setPropertyDouble("speed", args.rate.coerceIn(0.25, 4.0))
             invoke.resolve()
         }
@@ -507,7 +577,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setAudioTrack(invoke: Invoke) {
         val args = invoke.parseArgs(TrackArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.setPropertyString("aid", if (args.id < 0) "no" else args.id.toString())
             lastTracksSignature = ""
             invoke.resolve()
@@ -517,7 +587,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setSubtitleTrack(invoke: Invoke) {
         val args = invoke.parseArgs(TrackArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) mpv?.setPropertyString("sid", if (args.id < 0) "no" else args.id.toString())
             lastTracksSignature = ""
             invoke.resolve()
@@ -527,7 +597,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun addSubtitle(invoke: Invoke) {
         val args = invoke.parseArgs(SubtitleArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) {
                 val mode = if (args.select != false) "select" else "auto"
                 mpv?.command(arrayOf("sub-add", args.url, mode))
@@ -545,7 +615,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun setProperty(invoke: Invoke) {
         val args = invoke.parseArgs(SetPropArgs::class.java)
-        activity.runOnUiThread {
+        mpvHandler.post {
             if (mpvReady) runCatching { mpv?.setPropertyString(args.name, args.value) }
             else pendingProps[args.name] = args.value
             invoke.resolve()
