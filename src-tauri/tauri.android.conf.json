@@ -3,6 +3,9 @@
   "bundle": {
     "externalBin": [],
     "fileAssociations": [],
-    "resources": {}
+    "resources": {},
+    "android": {
+      "minSdkVersion": 26
+    }
   }
 }
