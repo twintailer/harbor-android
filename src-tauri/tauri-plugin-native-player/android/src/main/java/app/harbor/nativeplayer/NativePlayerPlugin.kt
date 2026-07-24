@@ -95,9 +95,41 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     // (url, startAtSec) requested before the surface existed; fired from
     // surfaceCreated. mpv cannot start playback without a window.
     private var pendingLoad: Pair<String, Double>? = null
+    private var startedPlaying = false
+    private var watchdog: Runnable? = null
 
     private companion object {
         const val VIDEO_OUTPUT = "gpu"
+        // A load that hasn't produced a single frame by now is not coming.
+        const val LOAD_TIMEOUT_MS = 30_000L
+    }
+
+    /** Tell the web side playback failed, so it ejects instead of hanging. */
+    private fun fail(reason: String) {
+        debug("error: $reason")
+        val data = JSObject()
+        data.put("status", "error")
+        trigger("status", data)
+    }
+
+    /**
+     * Without this a failure to start (no surface, dead link, mpv refusing the
+     * stream) leaves the UI on "connecting" forever with no way to tell why.
+     */
+    private fun armWatchdog() {
+        watchdog?.let { mainHandler.removeCallbacks(it) }
+        startedPlaying = false
+        val r = Runnable {
+            if (!startedPlaying) {
+                fail(
+                    if (!mpvReady) "mpv never initialized"
+                    else if (pendingLoad != null) "no video surface"
+                    else "stream did not start"
+                )
+            }
+        }
+        watchdog = r
+        mainHandler.postDelayed(r, LOAD_TIMEOUT_MS)
     }
 
     override fun load(webView: WebView) {
@@ -262,6 +294,11 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private fun tick() {
         val pos = dbl("time-pos")
         val dur = dbl("duration")
+        if (!startedPlaying && (pos > 0 || dur > 0)) {
+            startedPlaying = true
+            watchdog?.let { mainHandler.removeCallbacks(it) }
+            watchdog = null
+        }
         val time = JSObject()
         time.put("positionSec", if (pos > 0) pos else 0.0)
         time.put("durationSec", if (dur > 0) dur else 0.0)
@@ -347,13 +384,19 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     fun load(invoke: Invoke) {
         val args = invoke.parseArgs(LoadArgs::class.java)
         activity.runOnUiThread {
-            ensureMpv()
             debug("load: ${args.url.take(96)}")
+            runCatching { ensureMpv() }.onFailure { fail("mpv init threw: ${it.message}") }
+            if (!mpvReady) {
+                fail("mpv unavailable")
+                invoke.resolve()
+                return@runOnUiThread
+            }
             // Showing the view is what makes Android create the surface; that
             // arrives asynchronously in surfaceCreated. Loading before then
             // leaves mpv waiting for a window forever, so queue it if needed.
             surfaceView?.visibility = View.VISIBLE
             val start = args.startAtSec ?: 0.0
+            armWatchdog()
             if (surfaceReady) {
                 doLoad(args.url, start)
             } else {
@@ -387,6 +430,8 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
             // Drop a queued load, else closing before the surface arrived would
             // start the old stream afterwards.
             pendingLoad = null
+            watchdog?.let { mainHandler.removeCallbacks(it) }
+            watchdog = null
             if (mpvReady) {
                 mpv?.setPropertyBoolean("pause", true)
                 mpv?.command(arrayOf("stop"))
