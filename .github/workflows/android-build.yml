@@ -53,12 +53,17 @@ jobs:
 
       # libmpv 1.0.0 requires minSdk 26 (Android 8). Tauri defaults to 24, and
       # a stale generated build.gradle.kts would still say 24, so force it.
-      - name: Force minSdk 26 (libmpv requirement)
+      # Also let the app module's Kotlin 1.9 compiler read libmpv's Kotlin 2.2
+      # metadata (kotlin-stdlib 2.2 is dragged in transitively).
+      - name: Force minSdk 26 + allow newer Kotlin metadata
         run: |
           G=src-tauri/gen/android/app/build.gradle.kts
           test -f "$G"
           sed -i -E 's/minSdk[[:space:]]*=[[:space:]]*[0-9]+/minSdk = 26/' "$G"
-          grep -n "minSdk" "$G" || true
+          if ! grep -q "skip-metadata-version-check" "$G"; then
+            printf '\ntasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {\n    kotlinOptions.freeCompilerArgs += "-Xskip-metadata-version-check"\n}\n' >> "$G"
+          fi
+          grep -n "minSdk\|skip-metadata" "$G" || true
 
       - name: Generate app icons (real Harbor icon into the Android mipmaps)
         run: pnpm tauri icon src-tauri/icons/icon.png

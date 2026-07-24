@@ -18,6 +18,10 @@ android {
 
     kotlinOptions {
         jvmTarget = "1.8"
+        // libmpv 1.0.0 ships Kotlin 2.2 metadata while the Tauri Android
+        // project compiles with Kotlin 1.9. MPVLib is a tiny, stable API, so
+        // let the 1.9 compiler read the newer metadata instead of failing.
+        freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
     }
 }
 
