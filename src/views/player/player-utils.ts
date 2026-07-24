@@ -1,7 +1,8 @@
 import { createHtml5Bridge } from "@/lib/player/html5";
 import { createMpvBridge, probeMpv, type MpvRect } from "@/lib/player/mpv";
-import { createNativeBridge, probeNativePlayer } from "@/lib/player/native";
+import { createNativeBridge, lastNativeProbeError, probeNativePlayer } from "@/lib/player/native";
 import type { PlayerBridge } from "@/lib/player/bridge";
+import { mlog } from "@/lib/mobile-debug";
 import { isLinuxDesktop, isMacDesktop, isMobileTauri } from "@/lib/platform";
 
 export const SYNC_DRIFT_TOLERANCE_S = 0.6;
@@ -76,7 +77,16 @@ export async function pickBridge(
   // Mobile shells: prefer the native VLCKit backend (plays MKV/HEVC/etc.),
   // fall back to in-webview HTML5 decode when the plugin is unavailable.
   if (isMobileTauri()) {
-    if (await probeNativePlayer()) return { bridge: createNativeBridge(), engine: "html5" };
+    if (await probeNativePlayer()) {
+      mlog("pickBridge: native player");
+      return { bridge: createNativeBridge(), engine: "html5" };
+    }
+    // The in-webview decoder cannot play the containers Stremio serves, so this
+    // fallback hangs at "connecting" rather than degrading gracefully. Make the
+    // reason loud instead of silently handing over to a bridge that can't work.
+    const why = lastNativeProbeError() ?? "unknown";
+    mlog(`pickBridge: NATIVE PLAYER UNAVAILABLE (${why}) — falling back to html5`);
+    console.warn(`[harbor] native player unavailable (${why}); in-webview decode will fail for most streams`);
     return { bridge: createHtml5Bridge(), engine: "html5" };
   }
   if (want === "mpv") {

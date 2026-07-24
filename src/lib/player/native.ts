@@ -11,11 +11,30 @@ import {
 
 const PLUGIN = "plugin:native-player|";
 
+/**
+ * Why the native player wasn't used, when it wasn't. On a phone the HTML5
+ * fallback cannot play the containers Stremio serves, so a failed probe means
+ * playback will hang at "connecting" — this reason is what makes that
+ * diagnosable instead of silent.
+ */
+let nativeProbeError: string | null = null;
+export function lastNativeProbeError(): string | null {
+  return nativeProbeError;
+}
+
 export async function probeNativePlayer(): Promise<boolean> {
   try {
     const res = await invoke<{ available: boolean }>(`${PLUGIN}probe`);
-    return !!res?.available;
-  } catch {
+    if (!res?.available) {
+      nativeProbeError = "plugin reported unavailable";
+      mlog("native.probe: unavailable");
+      return false;
+    }
+    nativeProbeError = null;
+    return true;
+  } catch (e) {
+    nativeProbeError = String((e as Error)?.message ?? e);
+    mlog(`native.probe: failed — ${nativeProbeError}`);
     return false;
   }
 }
@@ -103,6 +122,7 @@ export function createNativeBridge(): PlayerBridge {
             : snap.status
           : (e.status as PlayerSnapshot["status"]) ?? snap.status;
       if (status === "ended") ended = true;
+      if (e.status === "error") mlog(`native.status: error — ${e.message ?? "(no reason)"}`);
       patch({
         status,
         buffering: !!e.buffering,
