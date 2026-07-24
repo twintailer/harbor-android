@@ -31,6 +31,8 @@ type NativeTrack = {
 
 type StatusEvent = {
   status?: string;
+  /** Why playback failed, when the native side can say (Android/mpv). */
+  message?: string;
   buffering?: boolean;
   durationSec?: number;
   rate?: number;
@@ -110,7 +112,7 @@ export function createNativeBridge(): PlayerBridge {
         subtitleTracks: toTracks(e.subtitleTracks, "subtitle"),
         videoWidth: e.videoWidth ?? snap.videoWidth,
         videoHeight: e.videoHeight ?? snap.videoHeight,
-        errorMessage: e.status === "error" ? "Native playback failed" : null,
+        errorMessage: e.status === "error" ? (e.message || "Native playback failed") : null,
         errorCode: e.status === "error" ? "decode" : null,
       });
     });

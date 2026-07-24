@@ -100,8 +100,19 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
     private companion object {
         const val VIDEO_OUTPUT = "gpu"
-        // A load that hasn't produced a single frame by now is not coming.
-        const val LOAD_TIMEOUT_MS = 30_000L
+        // Must stay BELOW the web side's STUCK_AUTORETRY_MS (18s): that retry
+        // reloads the player and re-arms this watchdog, so a longer timeout
+        // never fires and the failure reason is never reported.
+        const val LOAD_TIMEOUT_MS = 12_000L
+    }
+
+    /** Everything worth knowing when a load goes nowhere, in one line. */
+    private fun diagnosticState(): String {
+        val sv = surfaceView
+        return "mpv=${if (mpvReady) "ready" else "not-ready"}" +
+            " view=${if (sv == null) "none" else if (sv.visibility == View.VISIBLE) "visible" else "hidden"}" +
+            " surface=${if (surfaceReady) "ready" else "missing"}" +
+            " queued=${pendingLoad != null}"
     }
 
     /** Tell the web side playback failed, so it ejects instead of hanging. */
@@ -109,6 +120,9 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         debug("error: $reason")
         val data = JSObject()
         data.put("status", "error")
+        // Carried through to the on-screen error so a stuck load can be
+        // diagnosed from a screenshot instead of a log dump.
+        data.put("message", reason)
         trigger("status", data)
     }
 
@@ -120,13 +134,20 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         watchdog?.let { mainHandler.removeCallbacks(it) }
         startedPlaying = false
         val r = Runnable {
-            if (!startedPlaying) {
-                fail(
-                    if (!mpvReady) "mpv never initialized"
-                    else if (pendingLoad != null) "no video surface"
-                    else "stream did not start"
-                )
+            if (startedPlaying) return@Runnable
+            // Last chance: the view may have been created after the load (the
+            // webview's parent isn't always ready at plugin load). Re-check and
+            // fire the queued load if a surface has since appeared.
+            ensureView()
+            val queued = pendingLoad
+            if (queued != null && surfaceReady) {
+                pendingLoad = null
+                debug("watchdog: surface appeared late → loading")
+                doLoad(queued.first, queued.second)
+                mainHandler.postDelayed({ if (!startedPlaying) fail(diagnosticState()) }, LOAD_TIMEOUT_MS)
+                return@Runnable
             }
+            fail(diagnosticState())
         }
         watchdog = r
         mainHandler.postDelayed(r, LOAD_TIMEOUT_MS)
