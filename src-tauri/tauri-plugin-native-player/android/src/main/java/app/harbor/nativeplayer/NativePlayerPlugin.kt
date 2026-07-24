@@ -92,6 +92,13 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private var lastTracksSignature = ""
     // Style properties pushed before mpv existed, replayed after init.
     private val pendingProps = mutableMapOf<String, String>()
+    // (url, startAtSec) requested before the surface existed; fired from
+    // surfaceCreated. mpv cannot start playback without a window.
+    private var pendingLoad: Pair<String, Double>? = null
+
+    private companion object {
+        const val VIDEO_OUTPUT = "gpu"
+    }
 
     override fun load(webView: WebView) {
         super.load(webView)
@@ -112,13 +119,23 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
             ViewGroup.LayoutParams.MATCH_PARENT
         )
         sv.visibility = View.GONE
+        // Surface lifecycle drives the video output, following mpv-android's
+        // proven order. mpv's gpu VO cannot initialize without a window, so a
+        // `loadfile` issued before the surface exists just stalls ("connecting"
+        // forever) — any load requested meanwhile is queued and fired here.
         sv.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceReady = true
-                if (mpvReady) {
-                    mpv?.attachSurface(holder.surface)
-                    mpv?.setOptionString("force-window", "yes")
-                    mpv?.setOptionString("vid", "auto")
+                if (!mpvReady) return
+                mpv?.attachSurface(holder.surface)
+                mpv?.setOptionString("force-window", "yes")
+                val queued = pendingLoad
+                if (queued != null) {
+                    pendingLoad = null
+                    debug("surface ready → loading")
+                    doLoad(queued.first, queued.second)
+                } else {
+                    mpv?.setPropertyString("vo", VIDEO_OUTPUT)
                 }
             }
 
@@ -126,10 +143,12 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 surfaceReady = false
-                if (mpvReady) {
-                    mpv?.setOptionString("vid", "no")
-                    mpv?.detachSurface()
-                }
+                if (!mpvReady) return
+                // Drop the VO before the window goes away, else mpv renders
+                // into a dead surface.
+                mpv?.setPropertyString("vo", "null")
+                mpv?.setOptionString("force-window", "no")
+                mpv?.detachSurface()
             }
         })
         // Behind the webview; the page's player screen draws no background
@@ -172,7 +191,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         mpv?.setOptionString("config", "yes")
         mpv?.setOptionString("config-dir", configDir.path)
 
-        mpv?.setOptionString("vo", "gpu")
+        mpv?.setOptionString("vo", VIDEO_OUTPUT)
         mpv?.setOptionString("gpu-context", "android")
         mpv?.setOptionString("opengl-es", "yes")
         // Hardware decode via MediaCodec, copying frames out (the -copy variant)
@@ -206,11 +225,14 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
         mpv?.init()
         mpvReady = true
+        // No window yet — force-window stays off until a surface arrives,
+        // otherwise mpv tries to create one and stalls.
+        mpv?.setOptionString("force-window", "no")
 
         surfaceView?.holder?.surface?.takeIf { surfaceReady }?.let {
             mpv?.attachSurface(it)
             mpv?.setOptionString("force-window", "yes")
-            mpv?.setOptionString("vid", "auto")
+            mpv?.setPropertyString("vo", VIDEO_OUTPUT)
         }
         // Replay any style the web side pushed before the core existed.
         pendingProps.forEach { (k, v) -> runCatching { mpv?.setPropertyString(k, v) } }
@@ -310,21 +332,34 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve(ret)
     }
 
+    /** Issue the actual loadfile. Only call once a surface is attached. */
+    private fun doLoad(url: String, startAtSec: Double) {
+        lastTracksSignature = ""
+        if (startAtSec > 0) {
+            mpv?.command(arrayOf("loadfile", url, "replace", "start=$startAtSec"))
+        } else {
+            mpv?.command(arrayOf("loadfile", url, "replace"))
+        }
+        mpv?.setPropertyBoolean("pause", false)
+    }
+
     @Command
     fun load(invoke: Invoke) {
         val args = invoke.parseArgs(LoadArgs::class.java)
         activity.runOnUiThread {
             ensureMpv()
             debug("load: ${args.url.take(96)}")
+            // Showing the view is what makes Android create the surface; that
+            // arrives asynchronously in surfaceCreated. Loading before then
+            // leaves mpv waiting for a window forever, so queue it if needed.
             surfaceView?.visibility = View.VISIBLE
-            lastTracksSignature = ""
             val start = args.startAtSec ?: 0.0
-            if (start > 0) {
-                mpv?.command(arrayOf("loadfile", args.url, "replace", "start=$start"))
+            if (surfaceReady) {
+                doLoad(args.url, start)
             } else {
-                mpv?.command(arrayOf("loadfile", args.url, "replace"))
+                debug("load: waiting for surface")
+                pendingLoad = args.url to start
             }
-            mpv?.setPropertyBoolean("pause", false)
             invoke.resolve()
         }
     }
@@ -349,6 +384,9 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     fun stop(invoke: Invoke) {
         activity.runOnUiThread {
             debug("stop: begin")
+            // Drop a queued load, else closing before the surface arrived would
+            // start the old stream afterwards.
+            pendingLoad = null
             if (mpvReady) {
                 mpv?.setPropertyBoolean("pause", true)
                 mpv?.command(arrayOf("stop"))
