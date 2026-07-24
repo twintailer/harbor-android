@@ -32,6 +32,8 @@ export function useChromeVisibility(params: {
   const resizingUiRef = useRef(false);
   const anyMenuOpenRef = useRef(false);
   const resumeHideRef = useRef(false);
+  // Chrome visibility as it was when the current touch STARTED (see onMove).
+  const visibleBeforeTouchRef = useRef(false);
 
   const wakeChrome = useCallback(() => {
     setChromeVisible(true);
@@ -63,6 +65,15 @@ export function useChromeVisibility(params: {
     setChromeHidden(true);
   }, [setChromeHidden]);
 
+  /// A tap on the video surface. First tap reveals the controls and leaves them
+  /// up for the full window; tapping again while they were already up dismisses
+  /// them. Decided from the pre-touch state, because the window-level
+  /// touchstart listener has already woken the chrome by the time this runs.
+  const touchToggleChrome = useCallback(() => {
+    if (visibleBeforeTouchRef.current) hideChrome();
+    else wakeChrome();
+  }, [hideChrome, wakeChrome]);
+
   useEffect(() => {
     const playingChanged = prevPlayingRef.current !== playing;
     prevPlayingRef.current = playing;
@@ -73,7 +84,11 @@ export function useChromeVisibility(params: {
     } else {
       wakeChrome();
     }
-    const onMove = () => {
+    const onMove = (e: Event) => {
+      // Remember whether the chrome was already up BEFORE this touch revealed
+      // it. Without this the tap handler saw the state this very listener had
+      // just flipped and dismissed the chrome again a frame later.
+      if (e.type === "touchstart") visibleBeforeTouchRef.current = chromeVisibleRef.current;
       lastInputKeyboardRef.current = false;
       wakeChrome();
     };
@@ -175,6 +190,7 @@ export function useChromeVisibility(params: {
     wakeChrome,
     hideForResume,
     hideChrome,
+    touchToggleChrome,
     anyMenuOpen,
     setAnyMenuOpen,
     cursorStyle,

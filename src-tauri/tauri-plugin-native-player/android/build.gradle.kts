@@ -23,12 +23,12 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
-    // Media3 / ExoPlayer: plays the containers the Android WebView can't
-    // (MKV with h264/h265, EAC3/AC3 where the device decodes them) using the
-    // platform's hardware codecs — the Android counterpart of the iOS libmpv
-    // plugin, but battery-friendly because decode stays in MediaCodec.
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
-    implementation("androidx.media3:media3-ui:1.3.1")
+    // libmpv, the same engine the desktop and iOS builds use. ExoPlayer played
+    // the files fine but renders only a fraction of ASS/SSA subtitle styling,
+    // so subtitles never matched the desktop no matter how they were mapped.
+    // libmpv brings libass, which makes every subtitle setting behave exactly
+    // as it does on Windows/iOS. Hardware decode still goes through MediaCodec
+    // (hwdec=mediacodec-copy), so the battery cost stays reasonable.
+    implementation("dev.jdtech.mpv:libmpv:1.0.0")
     implementation(project(":tauri-android"))
 }

@@ -242,7 +242,7 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
     sendDraw,
   });
 
-  const { chromeVisible, wakeChrome, hideForResume, hideChrome, setAnyMenuOpen, cursorStyle } = useChromeVisibility({
+  const { chromeVisible, wakeChrome, hideForResume, touchToggleChrome, setAnyMenuOpen, cursorStyle } = useChromeVisibility({
     playing,
     drawMode,
     pipMode,
@@ -748,23 +748,20 @@ export function PlayerView({ src }: { src: PlayerSrc }) {
   const showChrome = !loaderActive && !loaderShowing && (chromeVisible || drawMode);
 
   // Tapping/clicking the video surface. On touch shells this ONLY summons the
-  // controls (second tap dismisses them) — playback toggles solely via the
-  // centre button, so brushing the screen can't pause the film. Desktop keeps
-  // click-to-play-pause. Used by both the video mount and DragClickStage, which
-  // is the layer that actually receives the tap.
-  const showChromeRef = useRef(showChrome);
-  showChromeRef.current = showChrome;
+  // controls (tapping again while they're up dismisses them) — playback toggles
+  // solely via the centre button, so brushing the screen can't pause the film.
+  // Desktop keeps click-to-play-pause. Used by both the video mount and
+  // DragClickStage, which is the layer that actually receives the tap.
   const stageTap = useCallback(() => {
     if (drawMode || pipMode) return;
     if (isMobileTauri()) {
-      if (showChromeRef.current) hideChrome();
-      else wakeChrome();
+      touchToggleChrome();
       return;
     }
     const resuming = snapRef.current.status !== "playing";
     playPauseToggle();
     if (resuming) hideForResume();
-  }, [drawMode, pipMode, hideChrome, wakeChrome, playPauseToggle, hideForResume]);
+  }, [drawMode, pipMode, touchToggleChrome, playPauseToggle, hideForResume]);
   const liveShellSnap = cast.castDevice
     ? { ...snap, status: (cast.castPlaying ? "playing" : "paused") as typeof snap.status }
     : snap;
