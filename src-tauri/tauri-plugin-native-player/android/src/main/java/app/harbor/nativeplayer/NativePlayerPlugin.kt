@@ -241,6 +241,32 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
      * Runs on mpvThread — must not touch views. Each step is logged so a hang
      * shows up as the last line in the debug log instead of silence.
      */
+    /**
+     * ffmpeg's mbedtls backend has no CA store on Android (no /etc/ssl/certs),
+     * so HTTPS can fail to verify with nothing but a handshake error. Export
+     * the system trust store once into a PEM bundle mpv can point at.
+     */
+    private fun prepareCaBundle(dir: File): File? {
+        val out = File(dir, "cacert.pem")
+        if (out.exists() && out.length() > 50_000) return out
+        return runCatching {
+            val ks = java.security.KeyStore.getInstance("AndroidCAStore")
+            ks.load(null, null)
+            val sb = StringBuilder()
+            val aliases = ks.aliases()
+            while (aliases.hasMoreElements()) {
+                val cert = ks.getCertificate(aliases.nextElement())
+                    as? java.security.cert.X509Certificate ?: continue
+                val b64 = android.util.Base64.encodeToString(cert.encoded, android.util.Base64.NO_WRAP)
+                sb.append("-----BEGIN CERTIFICATE-----\n")
+                b64.chunked(64).forEach { sb.append(it).append('\n') }
+                sb.append("-----END CERTIFICATE-----\n")
+            }
+            out.writeText(sb.toString())
+            out
+        }.getOrNull()?.takeIf { it.length() > 50_000 }
+    }
+
     private fun ensureMpv() {
         if (mpvReady) return
         debug("mpv: create")
@@ -272,6 +298,10 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
         val configDir = prepareConfigDir()
         debug("mpv: options")
+        prepareCaBundle(configDir)?.let {
+            mpv?.setOptionString("tls-ca-file", it.path)
+            debug("mpv: ca bundle ${it.length() / 1024}k")
+        } ?: debug("mpv: no ca bundle")
         mpv?.setOptionString("config", "yes")
         mpv?.setOptionString("config-dir", configDir.path)
 
@@ -464,13 +494,19 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         lastTracksSignature = ""
         // Off the UI thread: loadfile opens the stream, which can block.
         mpvHandler.post {
-            if (startAtSec > 0) {
-                mpv?.command(arrayOf("loadfile", url, "replace", "start=$startAtSec"))
-            } else {
-                mpv?.command(arrayOf("loadfile", url, "replace"))
+            // Resume position goes through the `start` OPTION, never as a
+            // loadfile argument: the positional arity changed across mpv
+            // releases and this build reads a 4th argument as <index>, so
+            // "start=371.955" was rejected as a non-integer and the whole
+            // loadfile was dropped — mpv then sat idle and never opened
+            // anything. Double.toString() is locale-independent (always "."),
+            // and "none" clears a previous resume for the next file.
+            runCatching {
+                mpv?.setPropertyString("start", if (startAtSec > 0) startAtSec.toString() else "none")
             }
+            mpv?.command(arrayOf("loadfile", url, "replace"))
             mpv?.setPropertyBoolean("pause", false)
-            debug("loadfile issued")
+            debug("loadfile issued (start=$startAtSec)")
         }
     }
 
