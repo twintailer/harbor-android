@@ -251,6 +251,25 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         debug("mpv: created")
 
+        // Forward mpv's own warnings/errors (ffmpeg included) to the debug log.
+        // The native lib already requests messages at "v", so a stream that
+        // opens on desktop but stalls at "loading" here will show its real
+        // reason (TLS, DNS, HTTP status, unsupported codec, hwdec failure).
+        mpv?.addLogObserver(object : MPVLib.LogObserver {
+            override fun logMessage(prefix: String, level: Int, text: String) {
+                val t = text.trim()
+                if (t.isEmpty()) return
+                // mpv levels: fatal=10 error=20 warn=30 info=40 v=50. Keep the
+                // meaningful ones plus anything that reads like a failure.
+                if (level <= 30 || t.contains("fail", true) || t.contains("error", true) ||
+                    t.contains("unable", true) || t.contains("refused", true) ||
+                    t.contains("timed out", true) || t.contains("cannot", true)
+                ) {
+                    debug("mpv[$prefix] ${t.take(200)}")
+                }
+            }
+        })
+
         val configDir = prepareConfigDir()
         debug("mpv: options")
         mpv?.setOptionString("config", "yes")

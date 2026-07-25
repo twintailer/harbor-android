@@ -58,7 +58,10 @@ export function mlog(msg: string): void {
   if (!isEnabled()) return;
   const t = typeof performance !== "undefined" ? performance.now() / 1000 : 0;
   LINES.push(`${t.toFixed(2)}  ${msg}`);
-  if (LINES.length > 24) LINES.shift();
+  // Keep a deep tail: the native player logs the URL, each mpv setup step and
+  // then any ffmpeg/mpv error — all of which must survive to the next-launch
+  // overlay to diagnose a stuck load.
+  if (LINES.length > 80) LINES.shift();
   try {
     localStorage.setItem(KEY, LINES.join("\n"));
   } catch {
